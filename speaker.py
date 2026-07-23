@@ -1,131 +1,40 @@
-
-
-# import pyttsx3
-# import threading
-# import queue
-
-# class Speaker:
-#     def __init__(self):
-#         self.queue = queue.Queue()
-#         self.running = True
-#         self.last_spoken = ""
-        
-#         self.thread = threading.Thread(target=self._process_queue, daemon=True)
-#         self.thread.start()
-
-#     def speak_unique(self, text):
-#         if not text:
-#             return
-        
-#         # Permitir siempre repetir los números de repeticiones ("Bien X")
-#         if not text.startswith("Bien ") and text == self.last_spoken:
-#             return
-        
-#         self.last_spoken = text
-#         # Vaciar cola anterior para decir siempre la instrucción más fresca
-#         while not self.queue.empty():
-#             try:
-#                 self.queue.get_nowait()
-#             except queue.Empty:
-#                 break
-                
-#         self.queue.put(text)
-
-#     def _process_queue(self):
-#         while self.running:
-#             try:
-#                 text = self.queue.get(timeout=1)
-#                 engine = pyttsx3.init()
-#                 engine.setProperty('rate', 180)
-#                 engine.say(text)
-#                 engine.runAndWait()
-#                 engine.stop()
-#             except queue.Empty:
-#                 continue
-#             except Exception as e:
-#                 print(f"Error en audio: {e}")
-
-
-
-
-# import threading
-# import queue
-# import time
-# import subprocess
-
-
-# class Speaker:
-#     def __init__(self):
-#         self.queue = queue.Queue()
-#         self.running = True
-#         self.last_time = {}
-
-#         self.thread = threading.Thread(
-#             target=self._process_queue,
-#             daemon=True
-#         )
-#         self.thread.start()
-
-#     def speak_unique(self, text):
-#         if not text:
-#             return
-
-#         ahora = time.time()
-
-#         # "Bien X" siempre se permite
-#         if not text.startswith("Bien "):
-#             if text in self.last_time:
-#                 if ahora - self.last_time[text] < 4:
-#                     return
-
-#             self.last_time[text] = ahora
-
-#         # Solo agregar si no hay otra voz esperando
-#         if self.queue.empty():
-#             self.queue.put(text)
-
-#     def _process_queue(self):
-#         while self.running:
-#             try:
-#                 text = self.queue.get(timeout=1)
-
-#                 print(f"🔊 {text}")
-
-#                 subprocess.run(
-#                     ["say", "-r", "180", text],
-#                     stdout=subprocess.DEVNULL,
-#                     stderr=subprocess.DEVNULL
-#                 )
-
-#             except queue.Empty:
-#                 continue
-#             except Exception as e:
-#                 print("Error en audio:", e)
-
-
 import threading
 import queue
 import time
-import subprocess
+import pyttsx3
+
 
 class Speaker:
-    def __init__(self):
+    def __init__(self, rate=180, voice_hint="ES-"):
         self.queue = queue.Queue()
         self.running = True
         self.last_time = {}
-        self.current_process = None
 
-        # Palabras clave de errores críticos que matan cualquier audio en curso
+        # Palabras clave de errores críticos: descartan cualquier mensaje
+        # pendiente (aún no hablado) en la cola para priorizarse.
         self.error_words = [
             "Pecho",
-            "Endereza"
+            "Endereza",
+            "Cadera",
         ]
 
-        self.thread = threading.Thread(
-            target=self._process_queue,
-            daemon=True
-        )
+        self.rate = rate
+        self.voice_hint = voice_hint
+
+        self.thread = threading.Thread(target=self._process_queue, daemon=True)
         self.thread.start()
+
+    def _build_engine(self):
+        # pyttsx3 + SAPI5 se cuelga si se reutiliza la misma instancia entre
+        # llamadas a runAndWait(); crear un motor nuevo por frase es el
+        # workaround estable en Windows.
+        engine = pyttsx3.init()
+        engine.setProperty("rate", self.rate)
+        for voice in engine.getProperty("voices"):
+            if self.voice_hint in voice.id:
+                engine.setProperty("voice", voice.id)
+                break
+        return engine
 
     def speak_unique(self, text):
         if not text:
@@ -133,86 +42,58 @@ class Speaker:
 
         ahora = time.time()
 
-        # ----------------------------------------------------
-        # 1. PRIORIDAD MÁXIMA: ERRORES TÉCNICOS CRÍTICOS
-        # ----------------------------------------------------
+        # 1. Prioridad máxima: errores técnicos críticos.
         if text in self.error_words:
-            # Control de cooldown específico para errores (3 segundos para no saturar al usuario)
-            if text in self.last_time:
-                if ahora - self.last_time[text] < 3.0:
-                    return
-            self.last_time[text] = ahora
-
-            # Interrumpir de inmediato cualquier audio que esté sonando (ej. si iba diciendo un "Bien")
-            if self.current_process is not None:
-                try:
-                    self.current_process.terminate()
-                except:
-                    pass
-
-            # Vaciar la cola para descartar audios viejos acumulados
-            while not self.queue.empty():
-                try:
-                    self.queue.get_nowait()
-                except queue.Empty:
-                    break
-
-            self.queue.put(text)
-            return
-
-        # ----------------------------------------------------
-        # 2. PRIORIDAD MEDIA: CONTADOR DE REPETICIONES
-        # ----------------------------------------------------
-        if text.startswith("Bien "):
-            # Sin filtro de tiempo (cooldown) para que los números fluyan seguidos sin bloquearse ("Bien 1", "Bien 2"...)
-            
-            # Si hay un error sonando, lo matamos también; si es otro conteo anterior, se limpia
-            if self.current_process is not None:
-                try:
-                    self.current_process.terminate()
-                except:
-                    pass
-
-            while not self.queue.empty():
-                try:
-                    self.queue.get_nowait()
-                except queue.Empty:
-                    break
-
-            self.queue.put(text)
-            return
-
-        # ----------------------------------------------------
-        # 3. INFORMACIÓN / OTROS MENSAJES GENERALES
-        # ----------------------------------------------------
-        if text in self.last_time:
-            if ahora - self.last_time[text] < 2.0:
+            if text in self.last_time and ahora - self.last_time[text] < 3.0:
                 return
+            self.last_time[text] = ahora
+            self._replace_pending(text)
+            return
 
+        # 2. Prioridad media: contador de repeticiones (sin cooldown,
+        # para que los números fluyan seguidos: "Bien 1", "Bien 2"...).
+        if text.startswith("Bien "):
+            self._replace_pending(text)
+            return
+
+        # 3. Información / mensajes generales.
+        if text in self.last_time and ahora - self.last_time[text] < 2.0:
+            return
         self.last_time[text] = ahora
 
         if self.queue.empty():
             self.queue.put(text)
 
+    def _replace_pending(self, text):
+        while not self.queue.empty():
+            try:
+                self.queue.get_nowait()
+            except queue.Empty:
+                break
+        self.queue.put(text)
+
     def _process_queue(self):
         while self.running:
             try:
                 text = self.queue.get(timeout=1)
-
-                print(time.time(), "SPEAKER ->", text)
-
-                self.current_process = subprocess.Popen(
-                    ["say", "-r", "180", text],
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL
-                )
-
-                self.current_process.wait()
-
-                self.current_process = None
-
             except queue.Empty:
                 continue
 
-            except Exception as e:
-                print(e)
+            print(time.time(), "SPEAKER ->", text)
+            # SAPI5/pywin32 deja el apartment COM del hilo en un estado que
+            # solo funciona para la PRIMERA vez que se habla en ese hilo; las
+            # llamadas siguientes "funcionan" (sin excepción) pero quedan
+            # mudas. Ejecutar cada frase en un hilo descartable nuevo evita
+            # el problema porque siempre es "la primera vez" en ese hilo.
+            worker = threading.Thread(target=self._speak_once, args=(text,))
+            worker.start()
+            worker.join()
+
+    def _speak_once(self, text):
+        engine = self._build_engine()
+        engine.say(text)
+        engine.runAndWait()
+        engine.stop()
+
+    def stop(self):
+        self.running = False
