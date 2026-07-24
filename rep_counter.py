@@ -14,11 +14,21 @@ class RepCounter:
         self.frames_arriba = 0
         self.frames_abajo = 0
 
-    def actualizar(self, angulo_rodilla_suavizado):
+    def actualizar(self, angulo_rodilla_suavizado, postura_valida=True):
         alerta = None
         color_alerta = None
         se_completo_repeticion = False
         nueva_bajada = False
+
+        if not postura_valida:
+            # Postura inválida (torso muy inclinado): se congela el progreso del
+            # estado para no contar una repetición falsa por un movimiento de
+            # cadera (hip-hinge) en vez de una flexión real de rodilla. No se
+            # resetea el contador ni el estado ya alcanzado — solo se pausa el
+            # avance hasta que la postura se corrija.
+            self.frames_arriba = 0
+            self.frames_abajo = 0
+            return self.estado, self.contador, alerta, color_alerta, se_completo_repeticion, nueva_bajada
 
         if angulo_rodilla_suavizado > self.UMBRAL_RODILLA_ARRIBA:
             self.frames_arriba += 1

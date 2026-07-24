@@ -37,16 +37,35 @@ class SquatAnalyzer(ExerciseAnalyzer):
     def punto_referencia(self, puntos):
         return puntos["rodilla"]
 
-    def validar_forma(self, puntos, angulo_suavizado, estado):
-        # Normalización del ángulo de la espalda (mapea de 0° a 90° reales respecto a la vertical)
+    def calcular_desviacion_secundaria(self, puntos):
         inclinacion_espalda = calcular_angulo_respecto_vertical(puntos["hombro"], puntos["cadera"])
         if inclinacion_espalda > 90:
             inclinacion_espalda = 180 - inclinacion_espalda
+        return inclinacion_espalda
 
+    def postura_valida_para_contar(self, angulo_principal_suavizado, desviacion_secundaria):
+        # Si el torso se inclina más allá del umbral ya validado para la alerta
+        # de espalda, congelamos el conteo — evita que un hip-hinge (doblar la
+        # cintura sin flexionar la rodilla) se cuente como sentadilla, ya que el
+        # ángulo 2D de rodilla puede leerse artificialmente bajo en ese caso.
+        return desviacion_secundaria <= FormValidator.INCLINACION_ESPALDA_MAX
+
+    def validar_forma(self, puntos, angulo_suavizado, estado, desviacion_secundaria, postura_valida):
         alerta_ov, color_ov, evento_voz_ov = self.form_validator.validar(
-            angulo_suavizado, inclinacion_espalda, estado, puntos["hombro"], puntos["cadera"]
+            angulo_suavizado, desviacion_secundaria, estado, puntos["hombro"], puntos["cadera"]
         )
-        return alerta_ov, color_ov, evento_voz_ov, inclinacion_espalda, evento_voz_ov == "Cadera"
+
+        if not postura_valida and alerta_ov is None:
+            # El gate de postura congeló el conteo, pero FormValidator no llegó a
+            # marcarlo porque su condición exige estado=="ABAJO" (que nunca se
+            # alcanza mientras el gate está activo). Reusamos el mismo aviso de
+            # espalda para que el usuario reciba la corrección correcta en vez de
+            # quedarse con el texto por defecto ("Colócate de perfil").
+            alerta_ov = "¡Endereza la espalda!"
+            color_ov = (0, 0, 255)
+            evento_voz_ov = "Endereza"
+
+        return alerta_ov, color_ov, evento_voz_ov, evento_voz_ov == "Cadera"
 
     def crear_form_scorer(self):
         return FormScorer(

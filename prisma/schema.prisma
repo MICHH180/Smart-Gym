@@ -1,0 +1,43 @@
+generator client {
+  provider = "prisma-client-py"
+  recursive_type_depth = 5
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String           @id @default(uuid())
+  email     String           @unique
+  createdAt DateTime         @default(now())
+  sessions  WorkoutSession[]
+}
+
+model WorkoutSession {
+  id         String           @id @default(uuid())
+  userId     String
+  user       User             @relation(fields: [userId], references: [id])
+  exercise   String
+  startedAt  DateTime         @default(now())
+  endedAt    DateTime?
+  reps       RepEvent[]
+  formErrors FormErrorEvent[]
+}
+
+model RepEvent {
+  id        String         @id @default(uuid())
+  sessionId String
+  session   WorkoutSession @relation(fields: [sessionId], references: [id])
+  repNumber Int
+  timestamp DateTime       @default(now())
+}
+
+model FormErrorEvent {
+  id        String         @id @default(uuid())
+  sessionId String
+  session   WorkoutSession @relation(fields: [sessionId], references: [id])
+  tipo      String
+  timestamp DateTime       @default(now())
+}

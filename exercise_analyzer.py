@@ -45,10 +45,23 @@ class ExerciseAnalyzer(ABC):
         """Punto [x, y] donde el llamador dibuja la etiqueta del ángulo en pantalla."""
 
     @abstractmethod
-    def validar_forma(self, puntos, angulo_suavizado, estado):
+    def calcular_desviacion_secundaria(self, puntos):
+        """Métrica continua de técnica secundaria (ej. inclinación de espalda),
+        independiente del estado del RepCounter — se calcula antes de que el
+        RepCounter avance, para poder usarla como gate."""
+
+    @abstractmethod
+    def postura_valida_para_contar(self, angulo_principal_suavizado, desviacion_secundaria):
+        """True si la postura actual permite que el RepCounter avance de estado
+        (o cuente una repetición); False si debe congelarse el progreso."""
+
+    @abstractmethod
+    def validar_forma(self, puntos, angulo_suavizado, estado, desviacion_secundaria, postura_valida):
         """Validaciones de técnica propias del ejercicio.
 
-        Devuelve (alerta_override, color_override, evento_voz, desviacion_forma, hubo_falla_secundaria).
+        Recibe la desviación secundaria y el resultado del gate de postura ya
+        calculados por la clase base (no los recalcula). Devuelve
+        (alerta_override, color_override, evento_voz, hubo_falla_secundaria).
         """
 
     @abstractmethod
@@ -110,7 +123,12 @@ class ExerciseAnalyzer(ABC):
             self.historial_angulo.append(angulo_crudo)
             angulo_suavizado = sum(self.historial_angulo) / len(self.historial_angulo)
 
-            estado, contador, alerta_rc, color_rc, se_completo_repeticion, nueva_bajada = self.rep_counter.actualizar(angulo_suavizado)
+            desviacion_secundaria = self.calcular_desviacion_secundaria(puntos)
+            postura_valida = self.postura_valida_para_contar(angulo_suavizado, desviacion_secundaria)
+
+            estado, contador, alerta_rc, color_rc, se_completo_repeticion, nueva_bajada = self.rep_counter.actualizar(
+                angulo_suavizado, postura_valida
+            )
 
             if self.form_scorer is None:
                 self.form_scorer = self.crear_form_scorer()
@@ -124,8 +142,8 @@ class ExerciseAnalyzer(ABC):
             if se_completo_repeticion:
                 evento_voz = f"Bien {contador}"
 
-            alerta_ov, color_ov, evento_voz_ov, desviacion_forma, hubo_falla_secundaria = self.validar_forma(
-                puntos, angulo_suavizado, estado
+            alerta_ov, color_ov, evento_voz_ov, hubo_falla_secundaria = self.validar_forma(
+                puntos, angulo_suavizado, estado, desviacion_secundaria, postura_valida
             )
             if alerta_ov is not None:
                 alerta = alerta_ov
@@ -133,7 +151,7 @@ class ExerciseAnalyzer(ABC):
             if evento_voz_ov is not None:
                 evento_voz = evento_voz_ov
 
-            self.form_scorer.actualizar(desviacion_forma, estado, hubo_falla_secundaria)
+            self.form_scorer.actualizar(desviacion_secundaria, estado, hubo_falla_secundaria)
             if se_completo_repeticion:
                 self.ultimo_form_score = self.form_scorer.finalizar_repeticion()
 

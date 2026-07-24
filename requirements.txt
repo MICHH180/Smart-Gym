@@ -1,0 +1,21 @@
+# Núcleo CV (main.py y módulos de análisis de sentadillas)
+opencv-python==5.0.0.93
+opencv-contrib-python==5.0.0.93
+mediapipe==0.10.14
+numpy==2.5.1
+pyttsx3==2.99
+comtypes==1.4.16
+pypiwin32==223
+pywin32==312
+
+# Backend web (backend/app.py, backend/workout_session.py)
+fastapi==0.139.2
+uvicorn[standard]==0.51.0
+
+# Solo para pruebas (backend/test_client.py usa websockets.sync.client,
+# instalado como parte de uvicorn[standard]; httpx lo requiere
+# starlette.testclient.TestClient para las pruebas del WebSocket)
+httpx==0.28.1
+
+# Persistencia (prisma/schema.prisma, backend/db.py)
+prisma==0.15.0
