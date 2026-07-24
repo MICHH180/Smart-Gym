@@ -5,7 +5,8 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 # Import relativo: backend/ es un namespace package (sin __init__.py) importado
 # como "backend.app" desde la raíz del proyecto (ver "uvicorn backend.app:app").
 from .workout_session import WorkoutSession
-from .db import db
+from .db import DEV_USER_EMAIL, db
+from .historial import router as historial_router
 
 # Alias explícito: prisma.models.WorkoutSession es el MODELO DE BASE DE DATOS
 # (una fila de sesión persistida). No confundir con .workout_session.WorkoutSession,
@@ -14,11 +15,7 @@ from .db import db
 from prisma.models import WorkoutSession as SesionDB
 
 app = FastAPI()
-
-# Usuario placeholder de desarrollo: todavía no hay autenticación real, así
-# que toda sesión persistida se asocia a este email fijo. Reemplazar cuando
-# se implemente auth (incremento futuro, fuera de este alcance).
-DEV_USER_EMAIL = "dev@smartgym.local"
+app.include_router(historial_router)
 
 
 @app.on_event("startup")

@@ -159,10 +159,15 @@ export default function Home() {
     let stream: MediaStream;
     try {
       stream = await navigator.mediaDevices.getUserMedia({ video: true });
-    } catch {
+    } catch (err) {
+      // El nombre del DOMException (NotAllowedError, NotReadableError,
+      // NotFoundError, etc.) dice la causa real — sin esto, cualquier falla
+      // de getUserMedia se ve idéntica en pantalla y es imposible de diagnosticar.
+      const nombre = err instanceof DOMException ? err.name : "Error desconocido";
+      console.error("getUserMedia falló:", nombre, err);
       setEstado("error");
       setErrorMensaje(
-        "No se pudo acceder a la cámara. Revisá los permisos del navegador e intentá de nuevo."
+        `No se pudo acceder a la cámara (${nombre}). Revisá los permisos del navegador e intentá de nuevo.`
       );
       return;
     }
