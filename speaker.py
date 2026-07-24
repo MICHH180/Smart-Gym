@@ -1,5 +1,5 @@
 
- 
+
 # import threading
 # import queue
 # import time
@@ -10,7 +10,7 @@
 #     # Carpeta donde se guardan los audios pre-generados (junto a este archivo)
 #     AUDIO_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "audio_cache")
  
-#     FRASES_FIJAS = ["Endereza", "Cadera", "Pecho", "Buen fondo", "Correcto: Baja"]
+#     FRASES_FIJAS = ["Endereza", "Cadera", "Pecho", "Buen fondo", "Correcto: Baja", "Bien pero endereza la espalda"]
 #     MAX_REPS_PRECARGA = 50  # pre-generamos "Bien 1".."Bien 50" para que salgan al instante
  
 #     def __init__(self):
@@ -182,7 +182,10 @@ class Speaker:
     # Carpeta donde se guardan los audios pre-generados (junto a este archivo)
     AUDIO_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "audio_cache")
  
-    FRASES_FIJAS = ["Endereza", "Cadera", "Pecho", "Buen fondo", "Correcto: Baja", "Bien pero endereza la espalda"]
+    FRASES_FIJAS = [
+        "Endereza", "Cadera", "Pecho", "Buen fondo", "Correcto: Baja",
+        "Bien pero endereza la espalda", "Bien pero endereza el torso",
+    ]
     MAX_REPS_PRECARGA = 50  # pre-generamos "Bien 1".."Bien 50" para que salgan al instante
  
     def __init__(self):

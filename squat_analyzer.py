@@ -1,4 +1,5 @@
 
+
 # from collections import deque
 # import numpy as np
 # import mediapipe as mp
@@ -29,10 +30,12 @@
 #         self.frames_error_espalda = 0
 #         self.UMBRAL_FRAMES_ERROR = 2  
         
-#         # Contadores de estabilidad de estado (1 = reacciona en el frame siguiente, más inmediato)
+#         # Contadores de estabilidad de estado (2 = necesita confirmación en 2 frames
+#         # seguidos antes de contar un cambio de estado; evita falsos conteos cuando
+#         # la malla pierde tracking por un instante y los puntos "brincan")
 #         self.frames_abajo = 0
 #         self.frames_arriba = 0
-#         self.UMBRAL_ESTADO = 1
+#         self.UMBRAL_ESTADO = 2
         
 #         # Banderas para evitar bucles infinitos de voz
 #         self.cadera_reportada = False
@@ -95,7 +98,12 @@
 #                 lm_hombro.visibility, lm_cadera.visibility,
 #                 lm_rodilla.visibility, lm_tobillo.visibility
 #             )
-#             if visibilidad_min < VISIBILIDAD_MINIMA:
+#             # Chequeo extra: si la malla completa (incluyendo manos/brazos) está
+#             # degradada en promedio, es señal de que el tracking general se está
+#             # perdiendo, aunque los 4 puntos que usamos todavía pasen el umbral.
+#             visibilidad_promedio_total = sum(lm.visibility for lm in landmarks) / len(landmarks)
+ 
+#             if visibilidad_min < VISIBILIDAD_MINIMA or visibilidad_promedio_total < 0.5:
 #                 raise ValueError("Landmarks poco confiables (probablemente no eres tú)")
  
 #             hombro = [lm_hombro.x, lm_hombro.y]
@@ -137,11 +145,13 @@
 #                         # Piernas ya estiradas, pero si la espalda TODAVÍA está muy
 #                         # inclinada es que subiste la cadera antes que el pecho
 #                         # (el clásico "good morning" hasta el final del movimiento).
-#                         # En ese caso no decimos "Bien hecho" sin más: corregimos.
+#                         # OJO: usamos una frase DISTINTA a "Endereza" (el aviso que
+#                         # ya suena mientras subes) para que no choque con su cooldown
+#                         # de 3 segundos y termine sin decir nada.
 #                         if inclinacion_espalda > 35:
 #                             alerta = f"Rep {self.contador}: ¡Endereza la espalda!"
 #                             color_alerta = (0, 0, 255)
-#                             evento_voz = "Endereza"
+#                             evento_voz = "Bien pero endereza la espalda"
 #                         else:
 #                             alerta = f"¡Bien hecho! ({self.contador})"
 #                             evento_voz = f"Bien {self.contador}"
@@ -306,6 +316,16 @@ class SquatAnalyzer:
         # fijo durante el movimiento para no meter saltos.
         self.lado_bloqueado = None
  
+        # ---- Sistema de precisión (0-100%) ----
+        # Por cada repetición, contamos en cuántos frames del movimiento hubo
+        # un error activo (cadera o espalda) contra el total de frames de esa
+        # bajada. Con eso armamos un porcentaje en vivo, no solo bien/mal.
+        self.frames_totales_rep = 0
+        self.frames_error_cadera_rep = 0
+        self.frames_error_espalda_rep = 0
+        self.precision_actual = 100
+        self.angulo_minimo_rep = 180
+ 
     def _elegir_landmarks(self, landmarks):
         """Elige el lado del cuerpo con mejor visibilidad para la cámara.
         Antes el código solo usaba el lado izquierdo, por eso de perfil total
@@ -343,6 +363,7 @@ class SquatAnalyzer:
         alerta = "Colócate de perfil"
         color_alerta = (255, 255, 255)
         evento_voz = None
+        info_repeticion = None
         
         try:
             landmarks = results.pose_landmarks.landmark
@@ -383,6 +404,9 @@ class SquatAnalyzer:
                     
             self.historial_rodilla.append(angulo_crudo)
             angulo_rodilla = sum(self.historial_rodilla) / len(self.historial_rodilla)
+ 
+            if angulo_rodilla < self.angulo_minimo_rep:
+                self.angulo_minimo_rep = angulo_rodilla
             
             # Normalización del ángulo de la espalda (mapea de 0° a 90° reales respecto a la vertical)
             inclinacion_espalda = self.calcular_angulo_espalda(hombro, cadera)
@@ -416,6 +440,21 @@ class SquatAnalyzer:
                             alerta = f"¡Bien hecho! ({self.contador})"
                             evento_voz = f"Bien {self.contador}"
                             color_alerta = (0, 255, 0)
+ 
+                        errores_rep = []
+                        if self.frames_error_cadera_rep > 0:
+                            errores_rep.append("cadera")
+                        if self.frames_error_espalda_rep > 0:
+                            errores_rep.append("espalda")
+ 
+                        info_repeticion = {
+                            "numero_rep": self.contador,
+                            "angulo_minimo": int(self.angulo_minimo_rep),
+                            "correcta": len(errores_rep) == 0,
+                            "errores": errores_rep,
+                            "precision": self.precision_actual,
+                        }
+                        self.angulo_minimo_rep = 180
                     else:
                         alerta = "Correcto: Baja"
                         color_alerta = (0, 255, 0)
@@ -439,6 +478,9 @@ class SquatAnalyzer:
                     if self.cadera_baseline is None:
                         self.cadera_baseline = cadera[1]
                         self.hombro_baseline = hombro[1]
+                        self.frames_totales_rep = 0
+                        self.frames_error_cadera_rep = 0
+                        self.frames_error_espalda_rep = 0
                 
             else:
                 self.frames_abajo = 0
@@ -499,15 +541,35 @@ class SquatAnalyzer:
             # Guardar posiciones actuales para el siguiente frame
             self.hombro_anterior = hombro
             self.cadera_anterior = cadera
-            
-            return int(angulo_rodilla), self.contador, alerta, color_alerta, rodilla, evento_voz
+ 
+            # ---- Precisión en vivo ----
+            # Contamos, mientras estás en la fase de bajada, en cuántos frames
+            # hubo un error activo. Con eso armamos un % que se puede mostrar
+            # en pantalla y guardar en la base de datos.
+            if self.estado == "ABAJO":
+                self.frames_totales_rep += 1
+                if detecto_error_cadera_frame:
+                    self.frames_error_cadera_rep += 1
+                if detecto_error_espalda_frame:
+                    self.frames_error_espalda_rep += 1
+ 
+            if self.frames_totales_rep > 0:
+                fraccion_cadera = self.frames_error_cadera_rep / self.frames_totales_rep
+                fraccion_espalda = self.frames_error_espalda_rep / self.frames_totales_rep
+                self.precision_actual = round(100 - 30 * fraccion_cadera - 30 * fraccion_espalda)
+                self.precision_actual = max(0, min(100, self.precision_actual))
+            else:
+                self.precision_actual = 100
+ 
+            return (int(angulo_rodilla), self.contador, alerta, color_alerta,
+                    rodilla, evento_voz, info_repeticion, self.precision_actual)
             
         except Exception as e:
             self.hombro_anterior = None
             self.cadera_anterior = None
             self.historial_rodilla.clear()  # Limpieza del historial si se pierde el esqueleto de vista
             self.lado_bloqueado = None  # Al recuperar la vista, se vuelve a elegir el mejor lado
-            return 0, self.contador, "Alineate con la camara", (0, 0, 255), [0, 0], None
+            return 0, self.contador, "Alineate con la camara", (0, 0, 255), [0, 0], None, None, self.precision_actual
  
     def calcular_angulo_3puntos(self, a, b, c):
         a = np.array(a)
