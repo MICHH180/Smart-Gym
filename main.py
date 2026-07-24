@@ -1,263 +1,327 @@
-
-
-# import cv2
-# import numpy as np
-# import threading
-# from pose_detector import PoseDetector
-# from speaker import Speaker
-# from squat_analyzer import SquatAnalyzer
-# from database import RegistroEntrenamiento
-# import time
- 
- 
-# class CamaraEnVivo:
-#     """Lee la cámara en un hilo aparte y se queda solo con el frame más reciente.
- 
-#     El problema del retraso de varios segundos casi siempre es esto: si procesar
-#     un frame (MediaPipe + dibujo) tarda más que el intervalo entre frames de la
-#     cámara, OpenCV va acumulando un backlog y terminas viendo/reaccionando a
-#     frames de hace varios segundos. Este hilo descarta los frames viejos y
-#     siempre entrega el más nuevo disponible.
-#     """
- 
-#     def __init__(self, src=0):
-#         self.cap = cv2.VideoCapture(src)
-#         # En algunos backends (V4L2/Linux) esto ayuda a reducir el buffer interno
-#         self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
- 
-#         self.lock = threading.Lock()
-#         self.frame = None
-#         self.ret = False
-#         self.running = True
-#         self.thread = threading.Thread(target=self._actualizar, daemon=True)
-#         self.thread.start()
- 
-#     def _actualizar(self):
-#         while self.running:
-#             ret, frame = self.cap.read()
-#             with self.lock:
-#                 self.ret = ret
-#                 self.frame = frame
- 
-#     def read(self):
-#         with self.lock:
-#             if self.frame is None:
-#                 return False, None
-#             return self.ret, self.frame.copy()
- 
-#     def isOpened(self):
-#         return self.cap.isOpened()
- 
-#     def release(self):
-#         self.running = False
-#         self.thread.join(timeout=1)
-#         self.cap.release()
- 
- 
-# # Inicializar componentes
-# detector = PoseDetector()
-# speaker = Speaker()
-# analyzer = SquatAnalyzer()
- 
-# registro = RegistroEntrenamiento()
-# sesion_id = registro.iniciar_sesion("sentadilla")
- 
-# cap = CamaraEnVivo(0)
-# print("Smart Gym - Módulo Modular de Sentadillas iniciado. Presiona 'ESC' para salir.")
- 
-# # Mensaje de bienvenida inicial
-# speaker.speak_unique("Prepárate. Baja para iniciar")
- 
-# while cap.isOpened():
-#     success, frame = cap.read()
-#     if not success:
-#         # El hilo de la cámara puede tardar un instante en entregar el primer frame
-#         time.sleep(0.01)
-#         continue
- 
-#     frame = cv2.flip(frame, 1)
-#     image, results = detector.procesar_frame(frame)
- 
-#     # Analizar postura y obtener métricas a través del módulo escalable
-#     angulo, contador, alerta, color_alerta, rodilla, evento_voz = analyzer.analizar(results)
- 
-#     # Cada vez que se cuenta una repetición nueva, se guarda en la base de datos.
-#     # Nota: aquí solo distinguimos el error de espalda (el que ocurre justo al
-#     # completar la rep); un error de cadera a mitad de movimiento que ya se
-#     # corrigió a tiempo no queda marcado como error en este registro.
-#     if evento_voz and evento_voz.startswith("Bien"):
-#         hubo_error_espalda = evento_voz == "Bien pero endereza la espalda"
-#         registro.registrar_repeticion(
-#             sesion_id,
-#             numero_rep=contador,
-#             pierna=getattr(analyzer, "lado_bloqueado", None),
-#             angulo_minimo=angulo,
-#             correcta=not hubo_error_espalda,
-#             errores=["espalda"] if hubo_error_espalda else [],
-#         )
- 
-#     if evento_voz:
-#         print(time.time(), "MAIN ->", evento_voz)
-#         speaker.speak_unique(evento_voz)
- 
-#     if results.pose_landmarks:
-#         # Mostrar el ángulo numérico en la pantalla cerca de la rodilla
-#         cv2.putText(image, str(angulo), 
-#                        tuple(np.multiply(rodilla, [640, 480]).astype(int)), 
-#                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2, cv2.LINE_AA)
- 
-#     # Dibujar panel visual de estadísticas en pantalla
-#     cv2.rectangle(image, (0, 0), (640, 73), (245, 117, 16), -1)
-    
-#     # Texto de Repeticiones
-#     cv2.putText(image, 'REPS', (15, 12), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 1, cv2.LINE_AA)
-#     cv2.putText(image, str(contador), (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 1.5, (255, 255, 255), 2, cv2.LINE_AA)
-    
-#     # Texto de Alerta / Estado
-#     cv2.putText(image, 'ESTADO', (130, 12), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 1, cv2.LINE_AA)
-#     cv2.putText(image, alerta, (130, 45), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color_alerta, 2, cv2.LINE_AA)
- 
-#     # Dibujar malla de esqueleto encima
-#     detector.dibujar_esqueleto(image, results)
- 
-#     cv2.imshow('Smart Gym - Sentadillas en Vivo', image)
- 
-#     if cv2.waitKey(10) & 0xFF == 27:
-#         break
- 
-# registro.cerrar_sesion(sesion_id)
-# cap.release()
-# cv2.destroyAllWindows()
+import asyncio
+import threading
+import time
+from contextlib import asynccontextmanager
 
 import cv2
 import numpy as np
-import threading
+from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
+
+from auth import EmailYaRegistradoError, GestorUsuarios, crear_token, verificar_token
+from database import RegistroEntrenamiento
 from pose_detector import PoseDetector
 from speaker import Speaker
 from squat_analyzer import SquatAnalyzer
-from database import RegistroEntrenamiento
-import time
- 
- 
+
+
 class CamaraEnVivo:
     """Lee la cámara en un hilo aparte y se queda solo con el frame más reciente.
- 
+
     El problema del retraso de varios segundos casi siempre es esto: si procesar
     un frame (MediaPipe + dibujo) tarda más que el intervalo entre frames de la
     cámara, OpenCV va acumulando un backlog y terminas viendo/reaccionando a
     frames de hace varios segundos. Este hilo descarta los frames viejos y
     siempre entrega el más nuevo disponible.
     """
- 
+
     def __init__(self, src=0):
         self.cap = cv2.VideoCapture(src)
         # En algunos backends (V4L2/Linux) esto ayuda a reducir el buffer interno
         self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
- 
+
         self.lock = threading.Lock()
         self.frame = None
         self.ret = False
         self.running = True
         self.thread = threading.Thread(target=self._actualizar, daemon=True)
         self.thread.start()
- 
+
     def _actualizar(self):
         while self.running:
             ret, frame = self.cap.read()
             with self.lock:
                 self.ret = ret
                 self.frame = frame
- 
+
     def read(self):
         with self.lock:
             if self.frame is None:
                 return False, None
             return self.ret, self.frame.copy()
- 
+
     def isOpened(self):
         return self.cap.isOpened()
- 
+
     def release(self):
         self.running = False
         self.thread.join(timeout=1)
         self.cap.release()
- 
- 
-# Inicializar componentes
-detector = PoseDetector()
-speaker = Speaker()
-analyzer = SquatAnalyzer()
- 
-registro = RegistroEntrenamiento()
-sesion_id = registro.iniciar_sesion("sentadilla")
- 
-cap = CamaraEnVivo(0)
-print("Smart Gym - Módulo Modular de Sentadillas iniciado. Presiona 'ESC' para salir.")
- 
-# Mensaje de bienvenida inicial
-speaker.speak_unique("Prepárate. Baja para iniciar")
- 
-while cap.isOpened():
-    success, frame = cap.read()
-    if not success:
-        # El hilo de la cámara puede tardar un instante en entregar el primer frame
-        time.sleep(0.01)
-        continue
- 
-    frame = cv2.flip(frame, 1)
-    image, results = detector.procesar_frame(frame)
- 
-    # Analizar postura y obtener métricas a través del módulo escalable
-    angulo, contador, alerta, color_alerta, rodilla, evento_voz, info_repeticion, precision_actual = analyzer.analizar(results)
- 
-    # Cada vez que se cuenta una repetición nueva, se guarda en la base de datos
-    # (incluyendo la precisión: % del movimiento que estuvo en buena forma)
-    if info_repeticion:
-        registro.registrar_repeticion(
-            sesion_id,
-            numero_rep=info_repeticion["numero_rep"],
-            pierna=getattr(analyzer, "lado_bloqueado", None),
-            angulo_minimo=info_repeticion["angulo_minimo"],
-            correcta=info_repeticion["correcta"],
-            errores=info_repeticion["errores"],
-            precision=info_repeticion["precision"],
-        )
- 
-    if evento_voz:
-        print(time.time(), "MAIN ->", evento_voz)
-        speaker.speak_unique(evento_voz)
- 
-    if results.pose_landmarks:
-        # Mostrar el ángulo numérico en la pantalla cerca de la rodilla
-        cv2.putText(image, str(angulo), 
-                       tuple(np.multiply(rodilla, [640, 480]).astype(int)), 
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2, cv2.LINE_AA)
- 
-    # Dibujar panel visual de estadísticas en pantalla
-    cv2.rectangle(image, (0, 0), (640, 73), (245, 117, 16), -1)
-    
-    # Texto de Repeticiones
-    cv2.putText(image, 'REPS', (15, 12), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 1, cv2.LINE_AA)
-    cv2.putText(image, str(contador), (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 1.5, (255, 255, 255), 2, cv2.LINE_AA)
-    
-    # Texto de Alerta / Estado
-    cv2.putText(image, 'ESTADO', (130, 12), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 1, cv2.LINE_AA)
-    cv2.putText(image, alerta, (130, 45), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color_alerta, 2, cv2.LINE_AA)
- 
-    # Precisión en vivo (% del movimiento en buena forma en la bajada actual)
-    color_precision = (0, 255, 0) if precision_actual >= 90 else (0, 255, 255) if precision_actual >= 70 else (0, 0, 255)
-    cv2.putText(image, 'PRECISION', (420, 12), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 1, cv2.LINE_AA)
-    cv2.putText(image, f"{precision_actual}%", (420, 60), cv2.FONT_HERSHEY_SIMPLEX, 1.5, color_precision, 2, cv2.LINE_AA)
- 
-    # Dibujar malla de esqueleto encima
-    detector.dibujar_esqueleto(image, results)
- 
-    cv2.imshow('Smart Gym - Sentadillas en Vivo', image)
- 
-    if cv2.waitKey(10) & 0xFF == 27:
-        break
- 
-registro.cerrar_sesion(sesion_id)
-cap.release()
-cv2.destroyAllWindows()
- 
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Recursos que dependen del hardware (cámara) o son costosos de crear
+    # (modelo de MediaPipe) viven una sola vez por el tiempo de vida del server.
+    app.state.detector = PoseDetector()
+    app.state.speaker = Speaker()
+    app.state.registro = RegistroEntrenamiento()
+    app.state.usuarios = GestorUsuarios()
+    app.state.camara = CamaraEnVivo(0)
+    # asyncio solo mantiene referencias débiles a las tasks de create_task():
+    # sin guardarlas acá, el watcher de desconexión puede desaparecer en
+    # medio de su ejecución antes de detectar que el cliente se fue.
+    app.state.tareas_fondo = set()
+    yield
+    app.state.camara.release()
+
+
+app = FastAPI(lifespan=lifespan)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+SESSION_COOKIE = "smart_gym_session"
+
+
+def _setear_cookie_sesion(response: Response, usuario: dict):
+    response.set_cookie(
+        key=SESSION_COOKIE,
+        value=crear_token(usuario),
+        httponly=True,
+        samesite="lax",
+        secure=False,  # dev sobre http; en producción con HTTPS esto debe ser True
+        max_age=7 * 24 * 60 * 60,
+        path="/",
+    )
+
+
+class RegistroRequest(BaseModel):
+    nombre: str
+    email: str
+    password: str
+
+
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+
+
+@app.post("/api/auth/registro", status_code=201)
+def registrar_usuario(payload: RegistroRequest, response: Response):
+    try:
+        usuario = app.state.usuarios.crear_usuario(payload.nombre, payload.email, payload.password)
+    except EmailYaRegistradoError:
+        raise HTTPException(status_code=409, detail="Ya existe una cuenta con ese email")
+
+    _setear_cookie_sesion(response, usuario)
+    return usuario
+
+
+@app.post("/api/auth/login")
+def iniciar_sesion_usuario(payload: LoginRequest, response: Response):
+    usuario = app.state.usuarios.verificar_credenciales(payload.email, payload.password)
+    if usuario is None:
+        raise HTTPException(status_code=401, detail="Email o contraseña incorrectos")
+
+    _setear_cookie_sesion(response, usuario)
+    return usuario
+
+
+def _usuario_desde_request(request: Request):
+    """Valida la cookie de sesión y devuelve {id, nombre, email}, o None si no hay sesión."""
+    token = request.cookies.get(SESSION_COOKIE)
+    payload = verificar_token(token) if token else None
+    if payload is None:
+        return None
+    return {"id": payload["sub"], "nombre": payload["nombre"], "email": payload["email"]}
+
+
+def _requerir_usuario(request: Request):
+    usuario = _usuario_desde_request(request)
+    if usuario is None:
+        raise HTTPException(status_code=401, detail="Necesitás iniciar sesión")
+    return usuario
+
+
+@app.get("/api/auth/me")
+def usuario_actual(request: Request):
+    usuario = _usuario_desde_request(request)
+    if usuario is None:
+        raise HTTPException(status_code=401, detail="No hay sesión activa")
+    return usuario
+
+
+@app.post("/api/auth/logout")
+def cerrar_sesion_usuario(response: Response):
+    response.delete_cookie(SESSION_COOKIE, path="/")
+    return {"ok": True}
+
+
+@app.get("/api/dashboard")
+def dashboard(request: Request):
+    usuario = _requerir_usuario(request)
+    registro = app.state.registro
+    return {
+        "stats": registro.obtener_resumen_usuario(usuario["id"]),
+        "sessions": registro.obtener_sesiones_usuario(usuario["id"]),
+    }
+
+
+def generar_frames_sentadilla(sesion_id):
+    """Reemplaza el loop de cv2.imshow: en vez de dibujar en una ventana nativa,
+    codifica cada frame como JPEG y lo entrega como una parte de un stream
+    multipart MJPEG. FastAPI/Starlette corren este generador sync en un
+    threadpool, así que los bloqueos de cv2/mediapipe no frenan el event loop.
+
+    El analizador de sentadillas se crea nuevo por cada conexión: cada vez que
+    el frontend arranca una sesión (GET /video_feed), el contador de reps
+    empieza de cero, en vez de acumularse entre sesiones distintas como pasaba
+    con el `analyzer` global del script de escritorio original.
+
+    Importante: `sesion_id` ya viene creada desde el endpoint (no se crea acá).
+    El cierre de la sesión (fecha_fin) NO se puede confiar solo al `finally`
+    de este generador: cuando el cliente corta la conexión (ej. navega a otra
+    página), Starlette deja de llamarle next() a este generador para siempre
+    -el error de socket ocurre en su capa, no en la nuestra- así que el
+    `finally` puede tardar en correr o no correr nunca, dependiendo de cuándo
+    el garbage collector junte el objeto. El cierre confiable lo hace el
+    watcher `vigilar_desconexion` en el endpoint /video_feed, en paralelo.
+    Este `finally` de acá queda como respaldo para cuando el generador sí
+    llega a terminar solo (ej. se cierra la cámara).
+    """
+    camara = app.state.camara
+    detector = app.state.detector
+    speaker = app.state.speaker
+    registro = app.state.registro
+    analyzer = SquatAnalyzer()
+
+    speaker.speak_unique("Prepárate. Baja para iniciar")
+
+    try:
+        while camara.isOpened():
+            success, frame = camara.read()
+            if not success:
+                # El hilo de la cámara puede tardar un instante en entregar el primer frame
+                time.sleep(0.01)
+                continue
+
+            frame = cv2.flip(frame, 1)
+            image, results = detector.procesar_frame(frame)
+
+            # Analizar postura y obtener métricas a través del módulo escalable
+            angulo, contador, alerta, color_alerta, rodilla, evento_voz, info_repeticion, precision_actual = analyzer.analizar(results)
+
+            # Cada vez que se cuenta una repetición nueva, se guarda en la base de datos
+            # (incluyendo la precisión: % del movimiento que estuvo en buena forma)
+            if info_repeticion:
+                registro.registrar_repeticion(
+                    sesion_id,
+                    numero_rep=info_repeticion["numero_rep"],
+                    pierna=getattr(analyzer, "lado_bloqueado", None),
+                    angulo_minimo=info_repeticion["angulo_minimo"],
+                    correcta=info_repeticion["correcta"],
+                    errores=info_repeticion["errores"],
+                    precision=info_repeticion["precision"],
+                )
+
+            if evento_voz:
+                print(time.time(), "MAIN ->", evento_voz)
+                speaker.speak_unique(evento_voz)
+
+            if results.pose_landmarks:
+                # Mostrar el ángulo numérico en la pantalla cerca de la rodilla
+                cv2.putText(image, str(angulo),
+                               tuple(np.multiply(rodilla, [640, 480]).astype(int)),
+                               cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2, cv2.LINE_AA)
+
+            # Dibujar panel visual de estadísticas en pantalla
+            cv2.rectangle(image, (0, 0), (640, 73), (245, 117, 16), -1)
+
+            # Texto de Repeticiones
+            cv2.putText(image, 'REPS', (15, 12), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 1, cv2.LINE_AA)
+            cv2.putText(image, str(contador), (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 1.5, (255, 255, 255), 2, cv2.LINE_AA)
+
+            # Texto de Alerta / Estado
+            cv2.putText(image, 'ESTADO', (130, 12), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 1, cv2.LINE_AA)
+            cv2.putText(image, alerta, (130, 45), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color_alerta, 2, cv2.LINE_AA)
+
+            # Precisión en vivo (% del movimiento en buena forma en la bajada actual)
+            color_precision = (0, 255, 0) if precision_actual >= 90 else (0, 255, 255) if precision_actual >= 70 else (0, 0, 255)
+            cv2.putText(image, 'PRECISION', (420, 12), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 1, cv2.LINE_AA)
+            cv2.putText(image, f"{precision_actual}%", (420, 60), cv2.FONT_HERSHEY_SIMPLEX, 1.5, color_precision, 2, cv2.LINE_AA)
+
+            # Dibujar malla de esqueleto encima
+            detector.dibujar_esqueleto(image, results)
+
+            ok, buffer = cv2.imencode(".jpg", image)
+            if not ok:
+                continue
+
+            yield (
+                b"--frame\r\n"
+                b"Content-Type: image/jpeg\r\n\r\n" + buffer.tobytes() + b"\r\n"
+            )
+    finally:
+        registro.cerrar_sesion(sesion_id)
+
+
+async def _vigilar_desconexion(request: Request, sesion_id: int):
+    """Respaldo best-effort para cuando el usuario cierra la pestaña o el
+    navegador entero sin pasar por el botón "Detener y finalizar" (ese caso
+    SÍ tiene un endpoint explícito, /api/sesiones/{id}/finalizar — ver ahí
+    el motivo de por qué es la vía principal). Este watcher sondea si el
+    socket se cerró; en la práctica los navegadores no cierran la conexión
+    TCP de un <img> desmontado de inmediato (la dejan viva por keep-alive
+    un rato), así que esto puede tardar o directamente no dispararse antes
+    de que el usuario ya se haya ido — por eso es solo un respaldo, no la
+    forma principal de cerrar la sesión."""
+    registro = app.state.registro
+    try:
+        while True:
+            if await request.is_disconnected():
+                registro.cerrar_sesion(sesion_id)
+                break
+            await asyncio.sleep(1)
+    except asyncio.CancelledError:
+        pass
+
+
+@app.post("/api/sesiones/iniciar", status_code=201)
+def iniciar_sesion_entrenamiento(request: Request):
+    usuario = _requerir_usuario(request)
+    sesion_id = app.state.registro.iniciar_sesion("sentadilla", usuario_id=usuario["id"])
+    return {"sesionId": sesion_id}
+
+
+@app.post("/api/sesiones/{sesion_id}/finalizar")
+def finalizar_sesion_entrenamiento(sesion_id: int, request: Request):
+    usuario = _requerir_usuario(request)
+    if not app.state.registro.sesion_pertenece_a(sesion_id, usuario["id"]):
+        raise HTTPException(status_code=404, detail="Sesión no encontrada")
+    app.state.registro.cerrar_sesion(sesion_id)
+    return {"ok": True}
+
+
+@app.get("/video_feed")
+async def video_feed(sesion_id: int, request: Request):
+    usuario = _requerir_usuario(request)
+    if not app.state.registro.sesion_pertenece_a(sesion_id, usuario["id"]):
+        raise HTTPException(status_code=404, detail="Sesión no encontrada")
+
+    tarea = asyncio.create_task(_vigilar_desconexion(request, sesion_id))
+    app.state.tareas_fondo.add(tarea)
+    tarea.add_done_callback(app.state.tareas_fondo.discard)
+
+    return StreamingResponse(
+        generar_frames_sentadilla(sesion_id),
+        media_type="multipart/x-mixed-replace; boundary=frame",
+    )

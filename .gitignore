@@ -1,2 +1,12 @@
 venv/
 .DS_Store
+# Bases de datos
+*.db
+*.sqlite3
+
+# Archivos compilados de Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+venv_legacy/

@@ -238,7 +238,7 @@ class RegistroEntrenamiento:
             )
         """)
         con.commit()
- 
+
         # Migración: si la base de datos ya existía de antes (sin la columna
         # "precision"), la agregamos sin perder nada de lo que ya tenías.
         cur.execute("PRAGMA table_info(repeticiones)")
@@ -246,20 +246,28 @@ class RegistroEntrenamiento:
         if "precision" not in columnas:
             cur.execute("ALTER TABLE repeticiones ADD COLUMN precision INTEGER")
             con.commit()
- 
+
+        # Migración: asociar cada sesión a un usuario (columna nueva desde
+        # que existe login). Las sesiones viejas quedan con usuario_id NULL.
+        cur.execute("PRAGMA table_info(sesiones)")
+        columnas = [fila[1] for fila in cur.fetchall()]
+        if "usuario_id" not in columnas:
+            cur.execute("ALTER TABLE sesiones ADD COLUMN usuario_id INTEGER")
+            con.commit()
+
         con.close()
- 
+
     # ------------------------------------------------------------
     # Escritura
     # ------------------------------------------------------------
-    def iniciar_sesion(self, ejercicio):
-        """Crea una nueva sesión (se llama una vez al arrancar el programa).
+    def iniciar_sesion(self, ejercicio, usuario_id=None):
+        """Crea una nueva sesión asociada a un usuario.
         Devuelve el id de la sesión para usarlo en registrar_repeticion()."""
         con = self._conectar()
         cur = con.cursor()
         cur.execute(
-            "INSERT INTO sesiones (ejercicio, fecha_inicio) VALUES (?, ?)",
-            (ejercicio, datetime.now().isoformat())
+            "INSERT INTO sesiones (ejercicio, fecha_inicio, usuario_id) VALUES (?, ?, ?)",
+            (ejercicio, datetime.now().isoformat(), usuario_id)
         )
         sesion_id = cur.lastrowid
         con.commit()
@@ -295,6 +303,14 @@ class RegistroEntrenamiento:
         )
         con.commit()
         con.close()
+
+    def sesion_pertenece_a(self, sesion_id, usuario_id):
+        con = self._conectar()
+        cur = con.cursor()
+        cur.execute("SELECT 1 FROM sesiones WHERE id = ? AND usuario_id = ?", (sesion_id, usuario_id))
+        existe = cur.fetchone() is not None
+        con.close()
+        return existe
  
     # ------------------------------------------------------------
     # Lectura (para cuando se construya la UI)
@@ -352,4 +368,65 @@ class RegistroEntrenamiento:
         filas = cur.fetchall()
         con.close()
         return filas
+
+    def obtener_resumen_usuario(self, usuario_id):
+        """Stats agregadas de un usuario puntual, para las stat cards del dashboard."""
+        con = self._conectar()
+        cur = con.cursor()
+        cur.execute("""
+            SELECT
+                COUNT(DISTINCT s.id) as total_sesiones,
+                COUNT(r.id) as total_reps,
+                COALESCE(SUM(CASE WHEN r.correcta = 0 THEN 1 ELSE 0 END), 0) as total_errores,
+                COALESCE(SUM(
+                    CASE WHEN s.fecha_fin IS NOT NULL
+                    THEN (julianday(s.fecha_fin) - julianday(s.fecha_inicio)) * 24 * 60
+                    ELSE 0 END
+                ), 0) as total_minutos
+            FROM sesiones s
+            LEFT JOIN repeticiones r ON r.sesion_id = s.id
+            WHERE s.usuario_id = ?
+        """, (usuario_id,))
+        total_sesiones, total_reps, total_errores, total_minutos = cur.fetchone()
+        con.close()
+        return {
+            "totalSessions": total_sesiones or 0,
+            "totalReps": total_reps or 0,
+            "totalFormErrors": total_errores or 0,
+            "totalMinutes": round(total_minutos or 0),
+        }
+
+    def obtener_sesiones_usuario(self, usuario_id, limite=20):
+        """Historial de sesiones de un usuario puntual, más recientes primero,
+        con repeticiones/errores/duración ya agregados por sesión."""
+        con = self._conectar()
+        cur = con.cursor()
+        cur.execute("""
+            SELECT
+                s.id, s.ejercicio, s.fecha_inicio,
+                COUNT(r.id) as reps,
+                COALESCE(SUM(CASE WHEN r.correcta = 0 THEN 1 ELSE 0 END), 0) as errores,
+                CASE WHEN s.fecha_fin IS NOT NULL
+                THEN ROUND((julianday(s.fecha_fin) - julianday(s.fecha_inicio)) * 24 * 60)
+                ELSE 0 END as duracion_min
+            FROM sesiones s
+            LEFT JOIN repeticiones r ON r.sesion_id = s.id
+            WHERE s.usuario_id = ?
+            GROUP BY s.id
+            ORDER BY s.fecha_inicio DESC
+            LIMIT ?
+        """, (usuario_id, limite))
+        filas = cur.fetchall()
+        con.close()
+        return [
+            {
+                "id": str(sesion_id),
+                "exerciseName": ejercicio.capitalize(),
+                "date": fecha_inicio,
+                "reps": reps,
+                "formErrors": errores,
+                "durationMinutes": int(duracion_min),
+            }
+            for sesion_id, ejercicio, fecha_inicio, reps, errores, duracion_min in filas
+        ]
  
