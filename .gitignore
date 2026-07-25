@@ -10,3 +10,13 @@ __pycache__/
 *.pyo
 *.pyd
 venv_legacy/
+# Caché de Python y Entornos Virtuales
+__pycache__/
+*.py[cod]
+venv_legacy/
+venv/
+env/
+
+# Next.js y Node
+frontend/.next/
+frontend/node_modules/

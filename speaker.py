@@ -10,7 +10,12 @@
 #     # Carpeta donde se guardan los audios pre-generados (junto a este archivo)
 #     AUDIO_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "audio_cache")
  
-#     FRASES_FIJAS = ["Endereza", "Cadera", "Pecho", "Buen fondo", "Correcto: Baja", "Bien pero endereza la espalda"]
+#     FRASES_FIJAS = [
+#         "Endereza", "Cadera", "Pecho", "Buen fondo", "Correcto: Baja",
+#         "Bien pero endereza la espalda", "Bien pero endereza el torso",
+#         "Codo", "Hombro", "Bien pero fija el codo", "Bien pero no balancees",
+#         "Baja los hombros", "No te inclines", "Bien pero baja los hombros", "Bien pero no te inclines",
+#     ]
 #     MAX_REPS_PRECARGA = 50  # pre-generamos "Bien 1".."Bien 50" para que salgan al instante
  
 #     def __init__(self):
@@ -27,6 +32,10 @@
 #             "Pecho",
 #             "Endereza",
 #             "Cadera",
+#             "Codo",
+#             "Hombro",
+#             "Baja los hombros",
+#             "No te inclines",
 #         ]
  
 #         os.makedirs(self.AUDIO_DIR, exist_ok=True)
@@ -171,7 +180,6 @@
  
 
 
-
 import threading
 import queue
 import time
@@ -185,6 +193,9 @@ class Speaker:
     FRASES_FIJAS = [
         "Endereza", "Cadera", "Pecho", "Buen fondo", "Correcto: Baja",
         "Bien pero endereza la espalda", "Bien pero endereza el torso",
+        "Codo", "Hombro", "Bien pero fija el codo", "Bien pero no balancees",
+        "Baja los hombros", "No te inclines", "Bien pero baja los hombros", "Bien pero no te inclines",
+        "No subas tanto", "Bien pero no subas tanto", "Bien pero nivela los hombros",
     ]
     MAX_REPS_PRECARGA = 50  # pre-generamos "Bien 1".."Bien 50" para que salgan al instante
  
@@ -202,6 +213,11 @@ class Speaker:
             "Pecho",
             "Endereza",
             "Cadera",
+            "Codo",
+            "Hombro",
+            "Baja los hombros",
+            "No te inclines",
+            "No subas tanto",
         ]
  
         os.makedirs(self.AUDIO_DIR, exist_ok=True)
