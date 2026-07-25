@@ -13,9 +13,11 @@ from pydantic import BaseModel
 from auth import EmailYaRegistradoError, GestorUsuarios, crear_token, verificar_token
 from curl_analyzer import CurlAnalyzer
 from database import RegistroEntrenamiento
+from glute_bridge_analyzer import GluteBridgeAnalyzer
 from lateral_analyzer import LateralRaiseAnalyzer
 from lunge_analyzer import LungeAnalyzer
 from pose_detector import PoseDetector
+from push_analyzer import PushUpAnalyzer
 from speaker import Speaker
 from squat_analyzer import SquatAnalyzer
 
@@ -50,6 +52,18 @@ EJERCICIOS = {
         "analyzer_cls": LateralRaiseAnalyzer,
         "model_complexity": 0,
         "voz_bienvenida": "Prepárate, de frente a la cámara",
+    },
+    "flexiones": {
+        "analyzer_cls": PushUpAnalyzer,
+        "model_complexity": 0,
+        "voz_bienvenida": "Prepárate en posición de plancha",
+    },
+    "puente-gluteos": {
+        "analyzer_cls": GluteBridgeAnalyzer,
+        # El prototipo usa el modelo completo: acostado de perfil, el modelo
+        # ligero pierde con mayor frecuencia pies y tobillos.
+        "model_complexity": 1,
+        "voz_bienvenida": "Prepárate, acuéstate de perfil a la cámara",
     },
 }
 
@@ -275,14 +289,20 @@ def generar_frames(sesion_id, ejercicio):
 
             # Cada vez que se cuenta una repetición nueva, se guarda en la base de datos
             # (incluyendo la precisión: % del movimiento que estuvo en buena forma).
-            # Solo los desplantes distinguen pierna (info_repeticion["pierna"]); el
-            # resto no tiene ese concepto, salvo sentadillas que expone
-            # `lado_bloqueado` en el propio analyzer.
+            # Desplantes informa la pierna en `info_repeticion`. Sentadillas
+            # conserva su fallback histórico con `lado_bloqueado`; en ejercicios
+            # bilaterales (como puente de glúteos), ese lado solo sirve para medir
+            # la postura y no debe persistirse como una pierna entrenada.
             if info_repeticion:
+                pierna_fallback = (
+                    getattr(analyzer, "lado_bloqueado", None)
+                    if ejercicio == "sentadillas"
+                    else None
+                )
                 registro.registrar_repeticion(
                     sesion_id,
                     numero_rep=info_repeticion["numero_rep"],
-                    pierna=info_repeticion.get("pierna", getattr(analyzer, "lado_bloqueado", None)),
+                    pierna=info_repeticion.get("pierna", pierna_fallback),
                     angulo_minimo=info_repeticion["angulo_minimo"],
                     correcta=info_repeticion["correcta"],
                     errores=info_repeticion["errores"],

@@ -95,7 +95,7 @@ export default function ExerciseMedia({
         playsInline
         preload="metadata"
         onError={probarSiguiente}
-        className={`rounded-xl border border-border object-cover ${className}`}
+        className={`rounded-xl border border-border bg-surface-2 object-contain ${className}`}
       >
         {alt}
       </video>
@@ -110,7 +110,7 @@ export default function ExerciseMedia({
       src={src}
       alt={alt}
       onError={probarSiguiente}
-      className={`rounded-xl border border-border object-cover ${className}`}
+      className={`rounded-xl border border-border bg-surface-2 object-contain ${className}`}
     />
   );
 }

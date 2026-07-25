@@ -42,6 +42,9 @@ export default async function ExerciseTutorialPage({
         <span className="rounded-full border border-border px-3 py-1 text-xs font-medium text-muted">
           {exercise.difficulty}
         </span>
+        <span className="rounded-full border border-border px-3 py-1 text-xs font-medium text-muted">
+          {exercise.duration}
+        </span>
       </div>
 
       <div className="mt-2 flex flex-wrap gap-1.5">

@@ -209,6 +209,8 @@ NOMBRES_EJERCICIO = {
     "desplantes": "Desplantes",
     "curl-biceps": "Curl de bíceps",
     "elevaciones-laterales": "Elevaciones laterales",
+    "flexiones": "Flexiones",
+    "puente-gluteos": "Puente de glúteos",
 }
 
 
@@ -534,4 +536,3 @@ class RegistroEntrenamiento:
                 "unlocked": total_sesiones >= META_SESIONES,
             },
         ]
- 

@@ -87,7 +87,7 @@ export default function ExerciseImage({
       src={`${basePath}.${EXTENSIONS[extIndex]}`}
       alt={alt}
       onError={probarSiguienteExtension}
-      className={`rounded-xl border border-border object-cover ${className}`}
+      className={`rounded-xl border border-border bg-surface-2 object-contain ${className}`}
     />
   );
 }

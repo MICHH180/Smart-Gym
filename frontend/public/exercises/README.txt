@@ -25,6 +25,9 @@ Carpetas disponibles:
   desplantes/
   curl-biceps/
   elevaciones-laterales/
+  flexiones/
+  puente-gluteos/
+  plancha/
 
 No hace falta tocar ningún archivo .tsx: mientras el nombre y la carpeta
 coincidan, el medio aparece solo. Si no existe todavía, se muestra un

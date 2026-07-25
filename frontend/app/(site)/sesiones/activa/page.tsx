@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter, useSearchParams } from "next/navigation";
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { getExerciseById } from "../../../lib/exercises";
 import {
   API_URL,
@@ -10,7 +10,7 @@ import {
   finalizarSesionEntrenamiento,
 } from "../../../lib/api";
 
-export default function ActiveSessionPage() {
+function ActiveSessionContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const ejercicioId = searchParams.get("ejercicio") ?? undefined;
@@ -121,5 +121,19 @@ export default function ActiveSessionPage() {
         </button>
       </div>
     </div>
+  );
+}
+
+export default function ActiveSessionPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="mx-auto flex max-w-5xl justify-center px-4 py-8 text-sm text-muted sm:px-6 lg:px-8">
+          Cargando sesión...
+        </div>
+      }
+    >
+      <ActiveSessionContent />
+    </Suspense>
   );
 }
