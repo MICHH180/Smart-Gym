@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { getDashboardData, type DashboardStats, type SessionRecord } from "../../lib/dashboard";
+import { getDashboardData, type DashboardData } from "../../lib/dashboard";
 import { getUsuarioActual } from "../../lib/api";
 import StatCard from "../../components/StatCard";
 import SessionHistoryTable from "../../components/SessionHistoryTable";
@@ -32,7 +32,7 @@ const ICONS = {
 
 export default function DashboardPage() {
   const router = useRouter();
-  const [data, setData] = useState<{ stats: DashboardStats; sessions: SessionRecord[] } | null>(null);
+  const [data, setData] = useState<DashboardData | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -72,7 +72,7 @@ export default function DashboardPage() {
     );
   }
 
-  const { stats, sessions } = data;
+  const { stats, sessions, achievements } = data;
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-10 sm:px-6 lg:px-8">
@@ -90,6 +90,29 @@ export default function DashboardPage() {
         <StatCard label="Repeticiones totales" value={stats.totalReps} icon={ICONS.reps} />
         <StatCard label="Errores de forma" value={stats.totalFormErrors} icon={ICONS.errors} />
         <StatCard label="Minutos entrenados" value={stats.totalMinutes} icon={ICONS.time} />
+      </div>
+
+      <div className="mt-9">
+        <h2 className="font-display text-xl font-semibold text-foreground">
+          Logros recientes
+        </h2>
+        <div className="mt-3 grid grid-cols-2 gap-4 sm:grid-cols-3">
+          {achievements.map((logro) => (
+            <div
+              key={logro.id}
+              className={`rounded-2xl border bg-surface p-4 text-center ${
+                logro.unlocked ? "border-border" : "border-dashed border-border opacity-50"
+              }`}
+            >
+              <div className="text-2xl">{logro.emoji}</div>
+              <div
+                className={`mt-1.5 text-sm ${logro.unlocked ? "text-foreground" : "text-muted"}`}
+              >
+                {logro.label}
+              </div>
+            </div>
+          ))}
+        </div>
       </div>
 
       <div className="mt-10">

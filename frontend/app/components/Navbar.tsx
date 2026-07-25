@@ -1,8 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
-import { cerrarSesion, getUsuarioActual, type Usuario } from "../lib/api";
+import { useState } from "react";
+import { cerrarSesion } from "../lib/api";
+import { useUsuarioActual } from "../lib/useUsuarioActual";
 
 const NAV_LINKS = [
   { href: "/", label: "Inicio" },
@@ -10,21 +11,23 @@ const NAV_LINKS = [
   { href: "/dashboard", label: "Dashboard" },
 ];
 
+function RachaPill({ racha }: { racha: number }) {
+  if (racha < 1) return null;
+  return (
+    <div className="hidden items-center gap-2 rounded-full border border-border bg-surface px-3.5 py-1.5 text-sm sm:flex">
+      <span className="text-brand">🔥</span>
+      Racha de {racha} día{racha !== 1 ? "s" : ""}
+    </div>
+  );
+}
+
 export default function Navbar() {
   const [menuOpen, setMenuOpen] = useState(false);
-  const [usuario, setUsuario] = useState<Usuario | null>(null);
-  const [checkingSesion, setCheckingSesion] = useState(true);
-
-  useEffect(() => {
-    getUsuarioActual()
-      .then(setUsuario)
-      .finally(() => setCheckingSesion(false));
-  }, []);
+  const { usuario, loading } = useUsuarioActual();
 
   async function handleLogout() {
     await cerrarSesion();
-    setUsuario(null);
-    setMenuOpen(false);
+    window.location.href = "/";
   }
 
   return (
@@ -61,10 +64,11 @@ export default function Navbar() {
         </nav>
 
         <div className="flex items-center gap-3">
-          {!checkingSesion && (
+          {!loading && (
             <div className="hidden sm:flex sm:items-center sm:gap-3">
               {usuario ? (
                 <>
+                  <RachaPill racha={usuario.racha} />
                   <span className="text-sm text-muted">
                     Hola, <span className="text-foreground">{usuario.nombre.split(" ")[0]}</span>
                   </span>
@@ -128,6 +132,12 @@ export default function Navbar() {
 
             {usuario ? (
               <>
+                {usuario.racha >= 1 && (
+                  <span className="text-sm text-muted">
+                    <span className="text-brand">🔥</span> Racha de {usuario.racha} día
+                    {usuario.racha !== 1 ? "s" : ""}
+                  </span>
+                )}
                 <span className="text-sm text-muted">
                   Hola, <span className="text-foreground">{usuario.nombre.split(" ")[0]}</span>
                 </span>

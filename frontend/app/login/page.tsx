@@ -98,7 +98,7 @@ export default function LoginPage() {
               id="email"
               type="email"
               autoComplete="email"
-              placeholder="vos@ejemplo.com"
+              placeholder="tu@ejemplo.com"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               required
@@ -135,9 +135,9 @@ export default function LoginPage() {
         </form>
 
         <p className="mt-6 text-center text-sm text-muted">
-          ¿No tenés cuenta?{" "}
+          ¿No tienes cuenta?{" "}
           <Link href="/registro" className="font-medium text-brand hover:underline">
-            Registrate
+            Regístrate
           </Link>
         </p>
       </div>

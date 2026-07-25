@@ -16,10 +16,21 @@ export type SessionRecord = {
   durationMinutes: number;
 };
 
-export async function getDashboardData(): Promise<{
+export type Achievement = {
+  id: string;
+  emoji: string;
+  label: string;
+  unlocked: boolean;
+};
+
+export type DashboardData = {
   stats: DashboardStats;
   sessions: SessionRecord[];
-}> {
+  streak: number;
+  achievements: Achievement[];
+};
+
+export async function getDashboardData(): Promise<DashboardData> {
   const res = await fetch(`${API_URL}/api/dashboard`, {
     credentials: "include",
   });

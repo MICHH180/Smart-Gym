@@ -13,13 +13,21 @@ import {
 export default function ActiveSessionPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const ejercicio = searchParams.get("ejercicio") ?? undefined;
-  const exercise = ejercicio ? getExerciseById(ejercicio) : undefined;
+  const ejercicioId = searchParams.get("ejercicio") ?? undefined;
+  const exercise = ejercicioId ? getExerciseById(ejercicioId) : undefined;
 
   const [sesionId, setSesionId] = useState<number | null>(null);
   const [finalizando, setFinalizando] = useState(false);
 
   useEffect(() => {
+    // Sin ejercicio reconocido y disponible no hay nada que entrenar: se
+    // manda de vuelta a elegir uno en vez de intentar arrancar una sesión
+    // inválida contra el backend.
+    if (!exercise || !exercise.available) {
+      router.push("/#ejercicios");
+      return;
+    }
+
     let cancelado = false;
 
     getUsuarioActual().then((usuario) => {
@@ -28,7 +36,7 @@ export default function ActiveSessionPage() {
         router.push("/login");
         return;
       }
-      iniciarSesionEntrenamiento()
+      iniciarSesionEntrenamiento(exercise.id)
         .then((id) => !cancelado && setSesionId(id))
         .catch(() => !cancelado && router.push("/dashboard"));
     });
@@ -36,7 +44,7 @@ export default function ActiveSessionPage() {
     return () => {
       cancelado = true;
     };
-  }, [router]);
+  }, [router, exercise]);
 
   async function handleFinalizar() {
     setFinalizando(true);

@@ -4,6 +4,7 @@ export type Usuario = {
   id: number;
   nombre: string;
   email: string;
+  racha: number;
 };
 
 export async function getUsuarioActual(): Promise<Usuario | null> {
@@ -31,10 +32,12 @@ export async function cerrarSesion(): Promise<void> {
   }
 }
 
-export async function iniciarSesionEntrenamiento(): Promise<number> {
+export async function iniciarSesionEntrenamiento(ejercicio: string): Promise<number> {
   const res = await fetch(`${API_URL}/api/sesiones/iniciar`, {
     method: "POST",
+    headers: { "Content-Type": "application/json" },
     credentials: "include",
+    body: JSON.stringify({ ejercicio }),
   });
   if (!res.ok) throw new Error("No se pudo iniciar la sesión de entrenamiento.");
   const data = await res.json();

@@ -11,10 +11,47 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from auth import EmailYaRegistradoError, GestorUsuarios, crear_token, verificar_token
+from curl_analyzer import CurlAnalyzer
 from database import RegistroEntrenamiento
+from lateral_analyzer import LateralRaiseAnalyzer
+from lunge_analyzer import LungeAnalyzer
 from pose_detector import PoseDetector
 from speaker import Speaker
 from squat_analyzer import SquatAnalyzer
+
+
+# El "id" de cada ejercicio acá es el mismo que usa el frontend en sus rutas
+# (/ejercicios/<id>, ?ejercicio=<id>) — así no hace falta traducir entre un
+# nombre de exhibición y una clave interna en ningún lado.
+# `model_complexity` es el mismo parámetro que recibe PoseDetector: los
+# desplantes necesitan 1 porque las piernas se cruzan más en la imagen que
+# en el resto de los ejercicios. Cada sesión crea su PROPIO PoseDetector
+# (ver generar_frames) — NO se comparte una instancia entre sesiones, porque
+# el grafo de MediaPipe que hay adentro no está pensado para recibir frames
+# de dos streams a la vez (dos sesiones "solapadas" corrompiéndolo es
+# justamente el bug que causaba "Packet type mismatch... empty Packet").
+EJERCICIOS = {
+    "sentadillas": {
+        "analyzer_cls": SquatAnalyzer,
+        "model_complexity": 0,
+        "voz_bienvenida": "Prepárate. Baja para iniciar",
+    },
+    "desplantes": {
+        "analyzer_cls": LungeAnalyzer,
+        "model_complexity": 1,
+        "voz_bienvenida": "Prepárate. Da un paso para iniciar",
+    },
+    "curl-biceps": {
+        "analyzer_cls": CurlAnalyzer,
+        "model_complexity": 0,
+        "voz_bienvenida": "Prepárate, de frente a la cámara",
+    },
+    "elevaciones-laterales": {
+        "analyzer_cls": LateralRaiseAnalyzer,
+        "model_complexity": 0,
+        "voz_bienvenida": "Prepárate, de frente a la cámara",
+    },
+}
 
 
 class CamaraEnVivo:
@@ -65,7 +102,6 @@ class CamaraEnVivo:
 async def lifespan(app: FastAPI):
     # Recursos que dependen del hardware (cámara) o son costosos de crear
     # (modelo de MediaPipe) viven una sola vez por el tiempo de vida del server.
-    app.state.detector = PoseDetector()
     app.state.speaker = Speaker()
     app.state.registro = RegistroEntrenamiento()
     app.state.usuarios = GestorUsuarios()
@@ -74,6 +110,13 @@ async def lifespan(app: FastAPI):
     # sin guardarlas acá, el watcher de desconexión puede desaparecer en
     # medio de su ejecución antes de detectar que el cliente se fue.
     app.state.tareas_fondo = set()
+    # Solo puede haber una sesión "activa" de verdad a la vez (una sola
+    # cámara física). Cuando /video_feed arranca una sesión nueva, pisa este
+    # valor — así, si la sesión anterior seguía viva de fondo (el navegador
+    # no cierra la conexión del <img> anterior de inmediato), su generador
+    # se corta solo en la próxima vuelta del loop en vez de seguir
+    # procesando frames en paralelo con la nueva.
+    app.state.sesion_activa_id = None
     yield
     app.state.camara.release()
 
@@ -148,7 +191,7 @@ def _usuario_desde_request(request: Request):
 def _requerir_usuario(request: Request):
     usuario = _usuario_desde_request(request)
     if usuario is None:
-        raise HTTPException(status_code=401, detail="Necesitás iniciar sesión")
+        raise HTTPException(status_code=401, detail="Necesitas iniciar sesión")
     return usuario
 
 
@@ -157,7 +200,8 @@ def usuario_actual(request: Request):
     usuario = _usuario_desde_request(request)
     if usuario is None:
         raise HTTPException(status_code=401, detail="No hay sesión activa")
-    return usuario
+    racha = app.state.registro.obtener_racha_dias(usuario["id"])
+    return {**usuario, "racha": racha}
 
 
 @app.post("/api/auth/logout")
@@ -173,19 +217,24 @@ def dashboard(request: Request):
     return {
         "stats": registro.obtener_resumen_usuario(usuario["id"]),
         "sessions": registro.obtener_sesiones_usuario(usuario["id"]),
+        "streak": registro.obtener_racha_dias(usuario["id"]),
+        "achievements": registro.obtener_logros(usuario["id"]),
     }
 
 
-def generar_frames_sentadilla(sesion_id):
+def generar_frames(sesion_id, ejercicio):
     """Reemplaza el loop de cv2.imshow: en vez de dibujar en una ventana nativa,
     codifica cada frame como JPEG y lo entrega como una parte de un stream
     multipart MJPEG. FastAPI/Starlette corren este generador sync en un
     threadpool, así que los bloqueos de cv2/mediapipe no frenan el event loop.
 
-    El analizador de sentadillas se crea nuevo por cada conexión: cada vez que
-    el frontend arranca una sesión (GET /video_feed), el contador de reps
-    empieza de cero, en vez de acumularse entre sesiones distintas como pasaba
-    con el `analyzer` global del script de escritorio original.
+    Genérico para cualquier ejercicio de EJERCICIOS: el analizador y el
+    detector (según model_complexity) se resuelven según `ejercicio`. Tanto
+    el analizador como el PoseDetector se crean nuevos por cada conexión:
+    cada vez que el frontend arranca una sesión (GET /video_feed), el
+    contador de reps empieza de cero, y el grafo de MediaPipe es propio de
+    esta sesión (no compartido con ninguna otra, ver el comentario en
+    EJERCICIOS sobre por qué compartirlo corrompía el grafo).
 
     Importante: `sesion_id` ya viene creada desde el endpoint (no se crea acá).
     El cierre de la sesión (fecha_fin) NO se puede confiar solo al `finally`
@@ -196,18 +245,20 @@ def generar_frames_sentadilla(sesion_id):
     el garbage collector junte el objeto. El cierre confiable lo hace el
     watcher `vigilar_desconexion` en el endpoint /video_feed, en paralelo.
     Este `finally` de acá queda como respaldo para cuando el generador sí
-    llega a terminar solo (ej. se cierra la cámara).
+    llega a terminar solo (ej. se cierra la cámara, o lo reemplaza una
+    sesión más nueva vía sesion_activa_id).
     """
+    config = EJERCICIOS[ejercicio]
     camara = app.state.camara
-    detector = app.state.detector
+    detector = PoseDetector(model_complexity=config["model_complexity"])
     speaker = app.state.speaker
     registro = app.state.registro
-    analyzer = SquatAnalyzer()
+    analyzer = config["analyzer_cls"]()
 
-    speaker.speak_unique("Prepárate. Baja para iniciar")
+    speaker.speak_unique(config["voz_bienvenida"])
 
     try:
-        while camara.isOpened():
+        while camara.isOpened() and app.state.sesion_activa_id == sesion_id:
             success, frame = camara.read()
             if not success:
                 # El hilo de la cámara puede tardar un instante en entregar el primer frame
@@ -218,15 +269,20 @@ def generar_frames_sentadilla(sesion_id):
             image, results = detector.procesar_frame(frame)
 
             # Analizar postura y obtener métricas a través del módulo escalable
-            angulo, contador, alerta, color_alerta, rodilla, evento_voz, info_repeticion, precision_actual = analyzer.analizar(results)
+            # de este ejercicio. Todos los analizadores (sentadillas, desplantes,
+            # curl, elevaciones laterales) devuelven la misma forma de tupla.
+            angulo, contador, alerta, color_alerta, punto_referencia, evento_voz, info_repeticion, precision_actual = analyzer.analizar(results)
 
             # Cada vez que se cuenta una repetición nueva, se guarda en la base de datos
-            # (incluyendo la precisión: % del movimiento que estuvo en buena forma)
+            # (incluyendo la precisión: % del movimiento que estuvo en buena forma).
+            # Solo los desplantes distinguen pierna (info_repeticion["pierna"]); el
+            # resto no tiene ese concepto, salvo sentadillas que expone
+            # `lado_bloqueado` en el propio analyzer.
             if info_repeticion:
                 registro.registrar_repeticion(
                     sesion_id,
                     numero_rep=info_repeticion["numero_rep"],
-                    pierna=getattr(analyzer, "lado_bloqueado", None),
+                    pierna=info_repeticion.get("pierna", getattr(analyzer, "lado_bloqueado", None)),
                     angulo_minimo=info_repeticion["angulo_minimo"],
                     correcta=info_repeticion["correcta"],
                     errores=info_repeticion["errores"],
@@ -238,9 +294,10 @@ def generar_frames_sentadilla(sesion_id):
                 speaker.speak_unique(evento_voz)
 
             if results.pose_landmarks:
-                # Mostrar el ángulo numérico en la pantalla cerca de la rodilla
+                # Mostrar el ángulo numérico en pantalla, junto a la
+                # articulación de referencia del ejercicio (rodilla o codo)
                 cv2.putText(image, str(angulo),
-                               tuple(np.multiply(rodilla, [640, 480]).astype(int)),
+                               tuple(np.multiply(punto_referencia, [640, 480]).astype(int)),
                                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2, cv2.LINE_AA)
 
             # Dibujar panel visual de estadísticas en pantalla
@@ -295,17 +352,24 @@ async def _vigilar_desconexion(request: Request, sesion_id: int):
         pass
 
 
+class IniciarSesionRequest(BaseModel):
+    ejercicio: str
+
+
 @app.post("/api/sesiones/iniciar", status_code=201)
-def iniciar_sesion_entrenamiento(request: Request):
+def iniciar_sesion_entrenamiento(payload: IniciarSesionRequest, request: Request):
     usuario = _requerir_usuario(request)
-    sesion_id = app.state.registro.iniciar_sesion("sentadilla", usuario_id=usuario["id"])
+    if payload.ejercicio not in EJERCICIOS:
+        raise HTTPException(status_code=400, detail="Ejercicio no reconocido")
+    sesion_id = app.state.registro.iniciar_sesion(payload.ejercicio, usuario_id=usuario["id"])
     return {"sesionId": sesion_id}
 
 
 @app.post("/api/sesiones/{sesion_id}/finalizar")
 def finalizar_sesion_entrenamiento(sesion_id: int, request: Request):
     usuario = _requerir_usuario(request)
-    if not app.state.registro.sesion_pertenece_a(sesion_id, usuario["id"]):
+    sesion = app.state.registro.obtener_sesion(sesion_id)
+    if sesion is None or sesion["usuario_id"] != usuario["id"]:
         raise HTTPException(status_code=404, detail="Sesión no encontrada")
     app.state.registro.cerrar_sesion(sesion_id)
     return {"ok": True}
@@ -314,14 +378,22 @@ def finalizar_sesion_entrenamiento(sesion_id: int, request: Request):
 @app.get("/video_feed")
 async def video_feed(sesion_id: int, request: Request):
     usuario = _requerir_usuario(request)
-    if not app.state.registro.sesion_pertenece_a(sesion_id, usuario["id"]):
+    sesion = app.state.registro.obtener_sesion(sesion_id)
+    if sesion is None or sesion["usuario_id"] != usuario["id"]:
         raise HTTPException(status_code=404, detail="Sesión no encontrada")
+    if sesion["ejercicio"] not in EJERCICIOS:
+        raise HTTPException(status_code=400, detail="Ejercicio no reconocido")
+
+    # Esta sesión pasa a ser la activa. Si había otra corriendo de fondo
+    # (el navegador anterior no cerró la conexión a tiempo), su generador
+    # ve este cambio en la próxima vuelta del loop y se corta solo.
+    app.state.sesion_activa_id = sesion_id
 
     tarea = asyncio.create_task(_vigilar_desconexion(request, sesion_id))
     app.state.tareas_fondo.add(tarea)
     tarea.add_done_callback(app.state.tareas_fondo.discard)
 
     return StreamingResponse(
-        generar_frames_sentadilla(sesion_id),
+        generar_frames(sesion_id, sesion["ejercicio"]),
         media_type="multipart/x-mixed-replace; boundary=frame",
     )

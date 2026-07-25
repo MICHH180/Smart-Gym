@@ -81,10 +81,10 @@ export default function RegistroPage() {
         </Link>
 
         <h1 className="font-display mt-6 text-center text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">
-          Creá tu cuenta
+          Crea tu cuenta
         </h1>
         <p className="mt-1.5 text-center text-sm text-muted">
-          Empezá a entrenar con corrección de forma en tiempo real.
+          Empieza a entrenar con corrección de forma en tiempo real.
         </p>
 
         <form className="mt-8 space-y-4" onSubmit={handleSubmit}>
@@ -124,7 +124,7 @@ export default function RegistroPage() {
               id="email"
               type="email"
               autoComplete="email"
-              placeholder="vos@ejemplo.com"
+              placeholder="tu@ejemplo.com"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               required
@@ -182,9 +182,9 @@ export default function RegistroPage() {
         </form>
 
         <p className="mt-6 text-center text-sm text-muted">
-          ¿Ya tenés cuenta?{" "}
+          ¿Ya tienes cuenta?{" "}
           <Link href="/login" className="font-medium text-brand hover:underline">
-            Iniciá sesión
+            Inicia sesión
           </Link>
         </p>
       </div>

@@ -1,8 +1,8 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getExerciseById } from "../../../lib/exercises";
-
-const GALLERY_SLOTS = 3;
+import StreakNudge from "../../../components/StreakNudge";
+import ExerciseMedia from "../../../components/ExerciseMedia";
 
 export default async function ExerciseTutorialPage({
   params,
@@ -59,31 +59,15 @@ export default async function ExerciseTutorialPage({
         {exercise.description}
       </p>
 
-      <div className="mt-8 grid grid-cols-1 gap-3 sm:grid-cols-3">
-        {Array.from({ length: GALLERY_SLOTS }).map((_, i) => (
-          <div
-            key={i}
-            className="flex aspect-video items-center justify-center rounded-xl border border-border bg-surface-2"
-          >
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth={1.5}
-              className="h-8 w-8 text-muted"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                d="M4 16l4.5-4.5a2 2 0 0 1 2.8 0L16 16m-2-2 1.5-1.5a2 2 0 0 1 2.8 0L21 15M4 6h16a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1Z"
-              />
-            </svg>
-          </div>
-        ))}
+      <div className="mt-8">
+        <ExerciseMedia
+          basePath={`/exercises/${exercise.id}/1`}
+          alt={`${exercise.name} - demostración`}
+          className="aspect-video w-full min-h-[220px] rounded-2xl sm:min-h-[320px] lg:min-h-[420px]"
+        />
       </div>
-      <p className="mt-2 text-center text-xs text-muted sm:text-left">
-        Video de demostración / galería de referencia
+      <p className="mt-3 text-center text-sm text-muted sm:text-left">
+        Video o foto de demostración
       </p>
 
       <div className="mt-10 rounded-2xl border border-border bg-surface p-6">
@@ -111,7 +95,9 @@ export default async function ExerciseTutorialPage({
         </ul>
       </div>
 
-      <div className="mt-12 flex justify-center">
+      <StreakNudge />
+
+      <div className="mt-6 flex justify-center">
         <Link
           href={`/sesiones/activa?ejercicio=${exercise.id}`}
           className="w-full max-w-sm rounded-xl bg-brand px-8 py-4 text-center text-base font-semibold text-black shadow-lg shadow-brand/20 transition hover:bg-brand-dark sm:w-auto"

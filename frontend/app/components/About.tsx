@@ -12,7 +12,7 @@ const FEATURES = [
   {
     title: "Conteo automático de repeticiones",
     description:
-      "Cada repetición válida se cuenta sola, así vos te concentrás en la técnica y no en llevar la cuenta.",
+      "Cada repetición válida se cuenta sola, así te concentras en la técnica y no en llevar la cuenta.",
   },
 ];
 

@@ -7,7 +7,7 @@ export default function ExerciseGrid() {
       <div className="mx-auto max-w-6xl px-4 py-20 sm:px-6 lg:px-8">
         <div className="mx-auto max-w-2xl text-center">
           <h2 className="font-display text-3xl font-semibold tracking-tight text-foreground sm:text-4xl">
-            Elegí tu ejercicio
+            Elige tu ejercicio
           </h2>
           <p className="mt-4 text-muted">
             Cada ejercicio incluye un tutorial guiado antes de arrancar la
@@ -15,7 +15,7 @@ export default function ExerciseGrid() {
           </p>
         </div>
 
-        <div className="mt-12 grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="mx-auto mt-12 flex max-w-3xl flex-col gap-4">
           {exercises.map((exercise) => (
             <ExerciseCard key={exercise.id} exercise={exercise} />
           ))}

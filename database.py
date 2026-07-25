@@ -199,8 +199,19 @@ Esquema:
 import sqlite3
 import os
 from datetime import datetime
- 
- 
+
+# Mismas claves que EJERCICIOS en main.py / los ids de app/lib/exercises.ts
+# en el frontend. Se usa solo para mostrar un nombre lindo en el historial
+# del dashboard; si aparece una clave que no está acá (ejercicio viejo o
+# nuevo todavía sin agregar), se cae a un capitalize() simple.
+NOMBRES_EJERCICIO = {
+    "sentadillas": "Sentadillas",
+    "desplantes": "Desplantes",
+    "curl-biceps": "Curl de bíceps",
+    "elevaciones-laterales": "Elevaciones laterales",
+}
+
+
 class RegistroEntrenamiento:
     def __init__(self, ruta_db=None):
         if ruta_db is None:
@@ -304,13 +315,26 @@ class RegistroEntrenamiento:
         con.commit()
         con.close()
 
-    def sesion_pertenece_a(self, sesion_id, usuario_id):
+    def obtener_sesion(self, sesion_id):
+        """Devuelve {id, ejercicio, fecha_inicio, fecha_fin, usuario_id} o None."""
         con = self._conectar()
         cur = con.cursor()
-        cur.execute("SELECT 1 FROM sesiones WHERE id = ? AND usuario_id = ?", (sesion_id, usuario_id))
-        existe = cur.fetchone() is not None
+        cur.execute(
+            "SELECT id, ejercicio, fecha_inicio, fecha_fin, usuario_id FROM sesiones WHERE id = ?",
+            (sesion_id,)
+        )
+        fila = cur.fetchone()
         con.close()
-        return existe
+        if fila is None:
+            return None
+        sid, ejercicio, fecha_inicio, fecha_fin, usuario_id = fila
+        return {
+            "id": sid,
+            "ejercicio": ejercicio,
+            "fecha_inicio": fecha_inicio,
+            "fecha_fin": fecha_fin,
+            "usuario_id": usuario_id,
+        }
  
     # ------------------------------------------------------------
     # Lectura (para cuando se construya la UI)
@@ -421,12 +445,93 @@ class RegistroEntrenamiento:
         return [
             {
                 "id": str(sesion_id),
-                "exerciseName": ejercicio.capitalize(),
+                "exerciseName": NOMBRES_EJERCICIO.get(ejercicio, ejercicio.capitalize()),
                 "date": fecha_inicio,
                 "reps": reps,
                 "formErrors": errores,
                 "durationMinutes": int(duracion_min),
             }
             for sesion_id, ejercicio, fecha_inicio, reps, errores, duracion_min in filas
+        ]
+
+    def obtener_racha_dias(self, usuario_id):
+        """Días consecutivos (hasta hoy o ayer) con al menos una sesión.
+        Si el último día con sesión fue antes de ayer, la racha está cortada."""
+        con = self._conectar()
+        cur = con.cursor()
+        cur.execute(
+            "SELECT DISTINCT date(fecha_inicio) FROM sesiones WHERE usuario_id = ? ORDER BY date(fecha_inicio) DESC",
+            (usuario_id,)
+        )
+        dias = [fila[0] for fila in cur.fetchall()]
+        con.close()
+
+        if not dias:
+            return 0
+
+        hoy = datetime.now().date()
+        ultimo_dia = datetime.strptime(dias[0], "%Y-%m-%d").date()
+        if (hoy - ultimo_dia).days > 1:
+            return 0
+
+        racha = 1
+        dia_anterior = ultimo_dia
+        for dia_str in dias[1:]:
+            dia = datetime.strptime(dia_str, "%Y-%m-%d").date()
+            if (dia_anterior - dia).days == 1:
+                racha += 1
+                dia_anterior = dia
+            else:
+                break
+        return racha
+
+    def obtener_logros(self, usuario_id):
+        """Logros simples con metas fijas: racha activa, repeticiones sin
+        error acumuladas, y cantidad de sesiones. Devuelve cada uno con su
+        estado (desbloqueado o no) y un texto ya armado para mostrar."""
+        con = self._conectar()
+        cur = con.cursor()
+        cur.execute("""
+            SELECT
+                COUNT(DISTINCT s.id) as total_sesiones,
+                COALESCE(SUM(CASE WHEN r.correcta = 1 THEN 1 ELSE 0 END), 0) as reps_sin_error
+            FROM sesiones s
+            LEFT JOIN repeticiones r ON r.sesion_id = s.id
+            WHERE s.usuario_id = ?
+        """, (usuario_id,))
+        total_sesiones, reps_sin_error = cur.fetchone()
+        con.close()
+
+        racha = self.obtener_racha_dias(usuario_id)
+        META_REPS_SIN_ERROR = 50
+        META_SESIONES = 10
+
+        return [
+            {
+                "id": "racha",
+                "emoji": "🔥",
+                "label": f"Racha de {racha} día{'s' if racha != 1 else ''}",
+                "unlocked": racha >= 1,
+            },
+            {
+                "id": "reps_sin_error",
+                "emoji": "💪",
+                "label": (
+                    f"{META_REPS_SIN_ERROR} repeticiones sin error"
+                    if reps_sin_error >= META_REPS_SIN_ERROR
+                    else f"{reps_sin_error}/{META_REPS_SIN_ERROR} repeticiones sin error"
+                ),
+                "unlocked": reps_sin_error >= META_REPS_SIN_ERROR,
+            },
+            {
+                "id": "sesiones",
+                "emoji": "🏅",
+                "label": (
+                    f"{META_SESIONES} sesiones completadas"
+                    if total_sesiones >= META_SESIONES
+                    else f"{total_sesiones} sesiones (faltan {META_SESIONES - total_sesiones})"
+                ),
+                "unlocked": total_sesiones >= META_SESIONES,
+            },
         ]
  

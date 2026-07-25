@@ -19,7 +19,7 @@ const oswald = Oswald({
 });
 
 export const metadata: Metadata = {
-  title: "Smart-Gym | Entrená con IA",
+  title: "Smart-Gym | Entrena con IA",
   description:
     "Smart-Gym analiza tu técnica en tiempo real con visión por computadora para que entrenes mejor y con menos lesiones.",
 };
