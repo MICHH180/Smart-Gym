@@ -391,6 +391,11 @@ def finalizar_sesion_entrenamiento(sesion_id: int, request: Request):
     sesion = app.state.registro.obtener_sesion(sesion_id)
     if sesion is None or sesion["usuario_id"] != usuario["id"]:
         raise HTTPException(status_code=404, detail="Sesión no encontrada")
+    # Cerrar la fila en la base de datos no detiene por sí solo el generador
+    # MJPEG. Al limpiar el ID activo, su condición del while deja de cumplirse
+    # en la siguiente vuelta y MediaPipe deja de procesar/registrar repeticiones.
+    if app.state.sesion_activa_id == sesion_id:
+        app.state.sesion_activa_id = None
     app.state.registro.cerrar_sesion(sesion_id)
     return {"ok": True}
 
