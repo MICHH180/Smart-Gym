@@ -22,12 +22,18 @@ class CurlAnalyzer:
     """
  
     UMBRAL_EXTENDIDO = 155   # brazo casi recto = posición de reposo (para contar reps)
-    UMBRAL_REPOSO_BASELINE = 172  # más estricto: solo aquí se actualiza la línea base,
+    UMBRAL_REPOSO_BASELINE = 165  # más estricto: solo aquí se actualiza la línea base,
                                    # para no "perseguir" al hombro/codo si ya empezaron
-                                   # a moverse justo cuando arranca el curl
+                                   # a moverse justo cuando arranca el curl. Antes 172
+                                   # (casi 180 exactos) era demasiado estricto: si no
+                                   # regresabas a extensión total en CADA rep, la línea
+                                   # base se quedaba congelada de hace varias reps y
+                                   # cualquier variación normal se leía como "drift".
     UMBRAL_CONTRAIDO = 55    # brazo muy doblado = arriba del curl
-    UMBRAL_DRIFT_CODO = 0.06     # cuánto se puede mover el codo antes de marcar error
+    UMBRAL_DRIFT_CODO = 0.08     # cuánto se puede mover el codo antes de marcar error
+                                   # (antes 0.06: muy sensible al ruido normal del landmark)
     UMBRAL_DRIFT_HOMBRO = 0.035  # el hombro debería moverse aún menos que el codo
+    UMBRAL_DESNIVEL_HOMBROS = 0.12  # diferencia de altura entre hombros (normalizada por separación)
  
     def __init__(self):
         self.mp_pose = mp.solutions.pose
@@ -36,6 +42,13 @@ class CurlAnalyzer:
  
         self.historial_izq = deque(maxlen=3)
         self.historial_der = deque(maxlen=3)
+ 
+        # El landmark del codo brinca bastante frame a frame (más que el
+        # hombro), así que se suaviza con su propio historial antes de
+        # compararlo contra la línea base -- si no, un solo frame ruidoso
+        # puede disparar un error aunque el codo esté físicamente quieto.
+        self.historial_codo_izq = deque(maxlen=3)
+        self.historial_codo_der = deque(maxlen=3)
  
         self.frames_extendido = 0
         self.frames_contraido = 0
@@ -50,14 +63,17 @@ class CurlAnalyzer:
  
         self.frames_error_codo_rep = 0
         self.frames_error_hombro_rep = 0
+        self.frames_error_desnivel_rep = 0
         self.UMBRAL_FRAMES_ERROR = 2
         self.codo_reportado = False
         self.hombro_reportado = False
+        self.desnivel_reportado = False
  
         # ---- Precisión (0-100%) ----
         self.frames_totales_rep = 0
         self.frames_error_codo_precision = 0
         self.frames_error_hombro_precision = 0
+        self.frames_error_desnivel_precision = 0
         self.precision_actual = 100
         self.angulo_minimo_rep = 180
  
@@ -97,11 +113,22 @@ class CurlAnalyzer:
                         (255, 255, 0), [0, 0], None, None, self.precision_actual)
  
             hombro_izq = [lm_hombro_izq.x, lm_hombro_izq.y]
-            codo_izq = [lm_codo_izq.x, lm_codo_izq.y]
             muneca_izq = [lm_muneca_izq.x, lm_muneca_izq.y]
             hombro_der = [lm_hombro_der.x, lm_hombro_der.y]
-            codo_der = [lm_codo_der.x, lm_codo_der.y]
             muneca_der = [lm_muneca_der.x, lm_muneca_der.y]
+ 
+            # Suavizado del codo (promedio de los últimos frames) para que
+            # el ruido normal del landmark no se lea como "el codo se movió".
+            self.historial_codo_izq.append([lm_codo_izq.x, lm_codo_izq.y])
+            self.historial_codo_der.append([lm_codo_der.x, lm_codo_der.y])
+            codo_izq = list(np.mean(self.historial_codo_izq, axis=0))
+            codo_der = list(np.mean(self.historial_codo_der, axis=0))
+ 
+            # Desnivel de hombros (te vas "chueco" hacia un lado): comparamos
+            # la altura (y) de un hombro contra el otro, normalizado por la
+            # separación entre hombros para que no dependa de qué tan cerca
+            # estés de la cámara. Igual que ya lo tienes en elevaciones laterales.
+            desnivel_hombros = abs(hombro_izq[1] - hombro_der[1]) / separacion_hombros
  
             # Ángulo de cada brazo, suavizado
             self.historial_izq.append(self.calcular_angulo_3puntos(hombro_izq, codo_izq, muneca_izq))
@@ -140,6 +167,8 @@ class CurlAnalyzer:
                             errores_rep.append("codo")
                         if self.frames_error_hombro_rep > 0:
                             errores_rep.append("hombro")
+                        if self.frames_error_desnivel_rep > 0:
+                            errores_rep.append("desnivel")
  
                         if "codo" in errores_rep:
                             alerta = f"Rep {self.contador}: ¡Fija el codo!"
@@ -149,6 +178,10 @@ class CurlAnalyzer:
                             alerta = f"Rep {self.contador}: ¡No balancees!"
                             color_alerta = (0, 0, 255)
                             evento_voz = "Bien pero no balancees"
+                        elif "desnivel" in errores_rep:
+                            alerta = f"Rep {self.contador}: ¡Nivela los hombros!"
+                            color_alerta = (0, 0, 255)
+                            evento_voz = "Bien pero nivela los hombros"
                         else:
                             alerta = f"¡Bien hecho! ({self.contador})"
                             evento_voz = f"Bien {self.contador}"
@@ -165,6 +198,7 @@ class CurlAnalyzer:
                         self.frames_totales_rep = 0
                         self.frames_error_codo_precision = 0
                         self.frames_error_hombro_precision = 0
+                        self.frames_error_desnivel_precision = 0
                     else:
                         alerta = "Listo, sube"
                         color_alerta = (0, 255, 0)
@@ -172,6 +206,7 @@ class CurlAnalyzer:
                     self.estado = "EXTENDIDO"
                     self.frames_error_codo_rep = 0
                     self.frames_error_hombro_rep = 0
+                    self.frames_error_desnivel_rep = 0
  
             elif angulo_prom < self.UMBRAL_CONTRAIDO:
                 self.frames_contraido += 1
@@ -231,6 +266,20 @@ class CurlAnalyzer:
                 if self.frames_error_hombro_rep == 0:
                     self.hombro_reportado = False
  
+            # 4. Validación de desnivel entre hombros (te vas "chueco" hacia un lado)
+            detecto_error_desnivel_frame = desnivel_hombros > self.UMBRAL_DESNIVEL_HOMBROS
+            if detecto_error_desnivel_frame:
+                self.frames_error_desnivel_rep += 1
+                if self.frames_error_desnivel_rep >= self.UMBRAL_FRAMES_ERROR and not self.desnivel_reportado:
+                    if evento_voz is None:
+                        alerta = "¡Nivela los hombros!"
+                        color_alerta = (0, 0, 255)
+                        evento_voz = "Nivela los hombros"
+                    self.desnivel_reportado = True
+            else:
+                if self.frames_error_desnivel_rep == 0:
+                    self.desnivel_reportado = False
+ 
             # ---- Precisión en vivo ----
             if angulo_prom <= self.UMBRAL_EXTENDIDO:
                 self.frames_totales_rep += 1
@@ -238,11 +287,16 @@ class CurlAnalyzer:
                     self.frames_error_codo_precision += 1
                 if detecto_error_hombro_frame:
                     self.frames_error_hombro_precision += 1
+                if detecto_error_desnivel_frame:
+                    self.frames_error_desnivel_precision += 1
  
             if self.frames_totales_rep > 0:
                 fraccion_codo = self.frames_error_codo_precision / self.frames_totales_rep
                 fraccion_hombro = self.frames_error_hombro_precision / self.frames_totales_rep
-                self.precision_actual = round(100 - 30 * fraccion_codo - 30 * fraccion_hombro)
+                fraccion_desnivel = self.frames_error_desnivel_precision / self.frames_totales_rep
+                self.precision_actual = round(
+                    100 - 20 * fraccion_codo - 20 * fraccion_hombro - 20 * fraccion_desnivel
+                )
                 self.precision_actual = max(0, min(100, self.precision_actual))
             else:
                 self.precision_actual = 100
@@ -254,6 +308,8 @@ class CurlAnalyzer:
         except Exception:
             self.historial_izq.clear()
             self.historial_der.clear()
+            self.historial_codo_izq.clear()
+            self.historial_codo_der.clear()
             self.hombro_reposo_izq = None
             self.hombro_reposo_der = None
             self.codo_reposo_izq = None
